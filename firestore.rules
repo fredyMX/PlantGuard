@@ -1,0 +1,35 @@
+rules_version = '2';
+// Reglas de Firestore para PlantGuard.
+// Pégalas en: Consola de Firebase → Firestore Database → Reglas → Publicar.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Datos de cada usuario de la app (plantas, ajustes, historial simulado).
+    // Solo el dueño de la sesión puede leerlos y escribirlos.
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // ESP32: dispositivos/{ID} con estado (lo escribe el ESP32), cfg y cmd (los escribe la app).
+    // Cualquier sesión de la app que conozca el ID puede leerlo y mandarle órdenes:
+    // por eso el ID por defecto incluye parte de la MAC (pg-xxxxxx). Ver firmware/README.md → Seguridad.
+    match /dispositivos/{dev} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+        && dev.matches('^[a-z0-9][a-z0-9_-]{2,29}$')
+        && request.resource.data.keys().hasOnly(['estado', 'cfg', 'cmd'])
+        && (!('cfg' in request.resource.data) || (
+              request.resource.data.cfg.thr is int && request.resource.data.cfg.thr >= 5 && request.resource.data.cfg.thr <= 95
+              && request.resource.data.cfg.dur is int && request.resource.data.cfg.dur >= 1 && request.resource.data.cfg.dur <= 60
+              && request.resource.data.cfg.waitMs is int && request.resource.data.cfg.waitMs >= 1000));
+      allow delete: if false;
+
+      // Historial que guarda el ESP32: solo se agregan registros, nunca se editan ni borran.
+      match /{sub}/{doc} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null && sub in ['lecturas', 'eventos'];
+        allow update, delete: if false;
+      }
+    }
+  }
+}
