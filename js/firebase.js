@@ -14,6 +14,7 @@
       db = F.getFirestore(sdk.app.initializeApp(cfg));
       uid = (await sdk.auth.signInAnonymously(sdk.auth.getAuth())).user.uid;
     } catch (e) { return fail(e); }
+    PG.fb = { db: db, F: F, uid: uid }; /* para js/device.js (ESP32) */
 
     var col = function () { return F.collection.apply(null, [db, 'users', uid].concat([].slice.call(arguments))); };
     var ref = function () { return F.doc.apply(null, [db, 'users', uid].concat([].slice.call(arguments))); };
@@ -53,6 +54,7 @@
       var data = function (s) { return s.docs.map(function (d) { return d.data(); }).reverse(); };
       for (i = 0; i < list.length; i++) {
         id = list[i].id;
+        if (list[i].device) continue; /* las plantas con ESP32 leen su historial de dispositivos/{id} (device.js) */
         var q = function (sub, n) { return F.query(col('plantas', id, sub), F.orderBy('t', 'desc'), F.limit(n)); };
         var rs = await F.getDocs(q('lecturas', 600)), es = await F.getDocs(q('eventos', 80));
         PG.sim.setHistory(id, data(rs), data(es));

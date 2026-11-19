@@ -87,8 +87,12 @@
       });
       sec.querySelector('#rng').onchange = function () { range = this.value; draw(); };
       sec.querySelector('#clr').onclick = function () { PG.sim.clear(); };
-      var sub = function () { sec.querySelector('#sub').textContent = 'Simulación en vivo · ' + PG.plant.nombre + ' · hora de Ciudad de México'; };
-      sub(); PG.on('plant', sub);
+      var sub = function () {
+        var dev = PG.sim.device();
+        sec.querySelector('#sub').textContent = (dev ? 'Datos reales del ESP32 «' + dev.id + '»' : 'Simulación en vivo') + ' · ' + PG.plant.nombre + ' · hora de Ciudad de México';
+        sec.querySelector('#clr').style.display = dev ? 'none' : '';
+      };
+      sub(); PG.on('plant', sub); PG.on('show', function (id) { if (id === 'historial') sub(); });
       PG.on('hist', refresh);
     },
     onShow: function () { draw(); table(); }

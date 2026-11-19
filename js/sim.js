@@ -1,7 +1,9 @@
 /* Motor de simulación (Nivel 1): una simulación INDEPENDIENTE por planta.
    Cada planta tiene sus propios sensores (humedad del suelo, temperatura, humedad ambiente), bomba, espera entre riegos,
    historial y alertas, y todas siguen funcionando aunque no sea la planta activa. PG.state refleja la planta activa.
-   Todo corre en el navegador; los historiales se guardan en localStorage (y en Firebase si está configurado). */
+   Todo corre en el navegador; los historiales se guardan en localStorage (y en Firebase si está configurado).
+   Nivel 2: si una planta tiene un ESP32 vinculado (p.device), NO se simula: sus datos llegan de js/device.js
+   con PG.sim.external() y PG.sim.deviceEvents(). */
 (function () {
   var S = PG.state, KEY = 'pg_hist_v2', OLD = 'pg_hist_v1', SET = 'pg_ajustes_v1';
   var R = {}, cur = null, stepId = null, H = { readings: [], events: [] }, off = 0, flag = {}, n = 0, store = {};
@@ -84,7 +86,8 @@
       hum: last ? last.hum : Math.round(pr.hum + rnd(-3, 3)),
       ok: true, pump: false, pumpMode: '', pumpLeft: 0, lastEnd: 0, startAt: 0, off: 0, flag: {}
     };
-    r.H = has ? h : seed(r, pr);
+    if (p.device) { r.ok = false; r.dev = { id: p.device, t: 0, wait: true }; }
+    r.H = has ? h : p.device ? { readings: [], events: [] } : seed(r, pr);
     R[p.id] = r; return r;
   }
   function load(id) { var r = R[id]; RF.forEach(function (k) { S[k] = r[k]; }); H = r.H; off = r.off; flag = r.flag; }
@@ -168,21 +171,37 @@
     keep(act);
     plantList().forEach(function (p) { /* las demás plantas siguen su propia simulación con sus propios umbrales */
       if (p.id === act) return;
+      if (p.device) { devTick(p, ensure(p)); return; } /* ESP32 real: no se simula */
       ensure(p); stepId = p.id; load(p.id);
       var c = p.cfg || { thr: 35, dur: 10, wait: 30 }; S.thr = c.thr; S.dur = c.dur; S.wait = c.wait;
       step(); keep(p.id);
     });
     stepId = act; load(act); S.thr = mine.thr; S.dur = mine.dur; S.wait = mine.wait;
-    step();
+    var ap = byId(act);
+    if (ap && ap.device) devTick(ap, R[act], S); else step();
     if (n % 15 === 0) save();
     PG.emit('state', 'tick');
   }
+
+  /* ---------- ESP32 real ---------- */
+  var ONLINE_MS = 35000; /* el ESP32 manda su estado cada 10 s; si pasan 35 s sin nada, se considera sin conexión */
+  function devOf(p, r) {
+    if (!r.dev || r.dev.id !== p.device) r.dev = { id: p.device, t: 0, wait: true };
+    return r.dev;
+  }
+  function devTick(p, r, o) { /* o: dónde viven los valores (S si es la planta activa, si no R[id]) */
+    o = o || r; var d = devOf(p, r);
+    d.online = !d.wait && now() - d.t < ONLINE_MS;
+    if (o.pump && o.pumpLeft > 0) o.pumpLeft--; /* cuenta regresiva local entre un reporte y otro */
+  }
+  function histOf(id) { return id === cur ? H : R[id].H; }
 
   function liveData() {
     var last = null, i;
     for (i = H.events.length - 1; i >= 0; i--) if (H.events[i].type === 'auto' || H.events[i].type === 'manual') { last = H.events[i]; break; }
     var rem = S.lastEnd + waitMs() - now(), l = level('soil', S.soil);
     return {
+      fuenteDatos: devInfo() ? 'ESP32 real «' + devInfo().id + '»' + (devInfo().online ? '' : ' (sin conexión)') : 'Simulación en el navegador',
       nombrePlanta: (PG.plant ? PG.plant.nombre + (PG.plant.especie ? ' (' + PG.plant.especie + ')' : '') : 'La Dormilona (Mimosa pudica)'),
       ubicacion: PG.plant ? PG.plant.tipo + (PG.plant.ubicacion ? ', ' + PG.plant.ubicacion : '') : 'Interior, Sala junto a la ventana',
       humedadSuelo: S.ok ? Math.round(S.soil) + '%' : 'sin lectura (sensor desconectado)',
@@ -199,17 +218,24 @@
     };
   }
 
+  function devInfo() { var p = byId(cur); return p && p.device && R[cur] ? devOf(p, R[cur]) : null; }
+
   PG.sim = {
     level: level, fmtWhen: fmtWhen, toast: toast, TZ: TZ, liveData: liveData, _tick: tick, select: select,
     waitLeft: function () { return S.lastEnd ? Math.max(0, Math.ceil((S.lastEnd + waitMs() - now()) / 1000)) : 0; },
-    toggle: function () { if (S.pump) stopPump(); else startPump('manual'); },
-    fail: function () { fail(4); },
+    toggle: function () {
+      if (devInfo()) { if (PG.device) PG.device.toggle(cur); return; } /* con ESP32 la orden va a la nube */
+      if (S.pump) stopPump(); else startPump('manual');
+    },
+    fail: function () { if (!devInfo()) fail(4); },
+    device: devInfo,
     /* Resumen rápido de todas las plantas (para las pastillas de Inicio) */
     summary: function () {
       return plantList().map(function (p) {
         var a = p.id === cur, r = a ? S : R[p.id];
         if (!r) return { id: p.id, soil: null, ok: true, pump: false, lv: 'ok' };
-        return { id: p.id, soil: r.soil, ok: r.ok, pump: r.pump, lv: !r.ok ? 'bad' : level('soil', r.soil, a ? S.thr : (p.cfg || { thr: 35 }).thr) };
+        var off = p.device && R[p.id] && !(R[p.id].dev && R[p.id].dev.online);
+        return { id: p.id, soil: r.soil, ok: r.ok, pump: r.pump, lv: !r.ok || off ? 'bad' : level('soil', r.soil, a ? S.thr : (p.cfg || { thr: 35 }).thr) };
       });
     },
     saveSettings: function () {
@@ -217,15 +243,65 @@
       toast('Ajustes guardados' + (PG.plant ? ' para ' + PG.plant.nombre : ''), 'ok');
     },
     clear: function () {
+      if (devInfo()) return; /* el historial del ESP32 es real: no se reinicia con datos de ejemplo */
       PG.emit('history:clear', cur);
       H = seed({ soil: S.soil, temp: S.temp, hum: S.hum }, prof(byId(cur))); R[cur].H = H; save(); PG.emit('hist');
     },
     setHistory: function (id, r, e) {
       var p = byId(id); if (!p) return;
-      var x = ensure(p), d = (r.length || e.length) ? { readings: r, events: e } : seed(x, prof(p));
+      var x = ensure(p), d = (r.length || e.length || p.device) ? { readings: r, events: e } : seed(x, prof(p));
       if (r.length) { var l = r[r.length - 1]; x.soil = l.soil; x.temp = l.temp; x.hum = l.hum; if (id === cur) { S.soil = l.soil; S.temp = l.temp; S.hum = l.hum; } }
       x.H = d; if (id === cur) { H = d; PG.emit('hist'); }
       save();
+    },
+    /* Vincula una planta a un ESP32: se borra lo simulado y se espera el primer reporte */
+    attach: function (id, devId) {
+      var p = byId(id); if (!p) return;
+      var x = ensure(p), o = id === cur ? S : x;
+      x.dev = { id: devId, t: 0, wait: true }; o.ok = false; o.pump = false; o.pumpLeft = 0;
+      x.H = { readings: [], events: [] }; if (id === cur) { H = x.H; PG.emit('hist'); PG.emit('state', 'device'); }
+    },
+    /* Se quitó el ESP32: la planta vuelve a la simulación */
+    detach: function (id) {
+      var x = R[id]; if (!x) return;
+      delete x.dev; var o = id === cur ? S : x; o.ok = true; o.pump = false; o.pumpLeft = 0;
+      if (id === cur) { off = 0; x.off = 0; PG.emit('state', 'device'); }
+    },
+    /* Estado en vivo publicado por el ESP32 en dispositivos/{id}.estado */
+    external: function (id, e) {
+      var p = byId(id); if (!p || !p.device || !e) return;
+      var x = ensure(p), d = devOf(p, x), o = id === cur ? S : x, t = typeof e.t === 'number' ? e.t : 0;
+      if (!t || t <= d.t) return; /* nada nuevo */
+      d.t = t; d.wait = false; d.online = now() - t < ONLINE_MS;
+      d.rssi = e.rssi; d.fw = e.fw; d.ip = e.ip; d.cmdAck = e.cmdAck; d.dhtOk = e.dhtOk !== false; d.raw = e.soilRaw;
+      d.cfg = { thr: e.thr, dur: e.dur, waitMs: e.waitMs };
+      if (typeof e.soil === 'number') o.soil = e.soil;
+      if (typeof e.temp === 'number') o.temp = e.temp;
+      if (typeof e.hum === 'number') o.hum = e.hum;
+      o.ok = e.soilOk !== false;
+      o.pump = !!e.pump; o.pumpMode = e.pump ? (e.pumpMode || 'auto') : ''; o.pumpLeft = e.pumpLeft || 0;
+      o.lastEnd = e.lastEnd || 0;
+      if (o.ok) {
+        var h = histOf(id);
+        h.readings.push({ t: t, soil: r1(o.soil), temp: r1(o.temp), hum: Math.round(o.hum) });
+        if (h.readings.length > 600) h.readings.shift();
+      }
+      if (id === cur) { PG.emit('state', 'device'); PG.emit('hist'); }
+      PG.emit('device', id);
+    },
+    /* Eventos que escribió el ESP32 (riegos, alertas). quiet = no mostrar avisos (carga inicial) */
+    deviceEvents: function (id, list, quiet) {
+      var p = byId(id); if (!p || !p.device) return;
+      ensure(p);
+      var h = histOf(id), last = h.events.length ? h.events[h.events.length - 1].t : 0, any = false;
+      var KIND = { crit: 'bad', off: 'bad', on: 'ok', auto: 'info' };
+      list.forEach(function (e) {
+        if (!(e.t > last)) return;
+        h.events.push({ t: e.t, type: e.type, msg: e.msg }); any = true;
+        if (h.events.length > 80) h.events.shift();
+        if (!quiet && KIND[e.type]) toast((id === cur ? '' : p.nombre + ': ') + e.msg, KIND[e.type]);
+      });
+      if (any && id === cur) PG.emit('hist');
     }
   };
   Object.defineProperty(PG.sim, 'hist', { get: function () { return H; } });

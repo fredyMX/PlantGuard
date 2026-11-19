@@ -23,7 +23,7 @@
   PG.plantIcons = { list: ICONS, svg: svg };
 
   /* ---------- Datos ---------- */
-  var BLANK = { nombre: '', especie: '', tipo: 'Interior', ubicacion: '', descripcion: '', riego: 'Cada 2-3 días', luz: 'Indirecta', temp: '18-25°C', icono: 'suculenta' };
+  var BLANK = { nombre: '', especie: '', tipo: 'Interior', ubicacion: '', descripcion: '', riego: 'Cada 2-3 días', luz: 'Indirecta', temp: '18-25°C', icono: 'suculenta', device: '' };
   var MIMOSA = {
     id: 'p1', nombre: 'La Dormilona', especie: 'Mimosa pudica', tipo: 'Interior', ubicacion: 'Sala · junto a la ventana', icono: 'mimosa',
     descripcion: 'Conocida como "dormilona" porque sus hojas se pliegan al tacto o al anochecer — una señal visual útil para confirmar que está sana e hidratada.',
@@ -113,6 +113,13 @@
     else if (/[<>]/.test(c.descripcion)) e.descripcion = 'No uses los símbolos < ni >.';
     else if (/(https?:\/\/|www\.)/i.test(c.descripcion)) e.descripcion = 'No incluyas enlaces en la descripción.';
 
+    c.device = squash(v.device).toLowerCase(); /* ID del ESP32 (vacío = simulación) */
+    if (c.device && !/^[a-z0-9][a-z0-9_-]{2,29}$/.test(c.device)) e.device = 'Usa el ID que muestra el ESP32 en el Monitor Serie (ej.: pg-a1b2c3): letras, números y guiones.';
+    else if (c.device) {
+      var dup = (ctx.list || []).filter(function (p) { return p.id !== ctx.editingId && p.device === c.device; })[0];
+      if (dup) e.device = 'Ese ESP32 ya está vinculado a «' + dup.nombre + '».';
+    }
+
     c.icono = v.icono;
     if (!ICONS[c.icono]) e.icono = 'Elige un ícono.';
 
@@ -129,7 +136,7 @@
     '<div class="pl-row" id="p-chips" role="group" aria-label="Mis plantas"></div>',
     '<div class="plant"><span id="p-ico"></span>',
     '<h2 id="p-nombre"></h2><em id="p-especie"></em>',
-    '<div class="chips"><span class="chip" id="p-tipo"></span><span class="chip" id="p-ubic"></span></div></div>',
+    '<div class="chips"><span class="chip" id="p-tipo"></span><span class="chip" id="p-ubic"></span><span class="chip" id="p-dev"></span></div></div>',
     '<p class="muted" id="p-desc" style="font-size:14px"></p>',
     '<div class="facts">',
     '<div class="tile"><small>💧 Riego</small><b id="p-riego"></b></div>',
@@ -148,6 +155,7 @@
     fld('Ubicación', 'f-ubic', 50, 'Ej.: Sala · junto a la ventana'), fld('Riego recomendado *', 'f-riego', 25, 'Ej.: Cada 2-3 días'),
     '<label class="fld">Luz *<select id="f-luz"></select><small class="err" data-for="f-luz" role="alert"></small></label>',
     fld('Temperatura ideal *', 'f-temp', 15, 'Ej.: 18-25°C'),
+    '<label class="fld">ID del ESP32 (opcional)<input id="f-dev" maxlength="30" placeholder="Ej.: pg-a1b2c3" autocomplete="off" autocapitalize="off" spellcheck="false"><small class="err" data-for="f-dev" role="alert"></small><small class="muted" style="display:block">Con un ID, esta planta usa los sensores reales del ESP32. Vacío = simulación.</small></label>',
     '<label class="fld">Descripción<textarea id="f-desc" rows="3" maxlength="200" placeholder="Ej.: Sus hojas se pliegan al tocarlas"></textarea><small class="err" data-for="f-desc" role="alert"></small><small class="muted" id="f-count" style="display:block;text-align:right"></small></label>',
     '<button class="save" id="p-save">Guardar</button>',
     '<button class="ghost" id="p-cancel" style="margin-top:10px">Cancelar</button>',
@@ -159,13 +167,14 @@
     html: html,
     init: function (sec) {
       var $ = function (s) { return sec.querySelector(s); }, editing = null, sel = 'suculenta';
-      var ids = { nombre: '#f-nombre', especie: '#f-especie', tipo: '#f-tipo', ubicacion: '#f-ubic', riego: '#f-riego', luz: '#f-luz', temp: '#f-temp', descripcion: '#f-desc' };
+      var ids = { nombre: '#f-nombre', especie: '#f-especie', tipo: '#f-tipo', ubicacion: '#f-ubic', riego: '#f-riego', luz: '#f-luz', temp: '#f-temp', descripcion: '#f-desc', device: '#f-dev' };
 
       function txt(id, v, hide) { var el = $(id); el.textContent = v || '—'; if (hide) el.style.display = v ? '' : 'none'; }
       function show() {
         var P = active();
         $('#p-ico').innerHTML = svg(P.icono, 120);
         txt('#p-nombre', P.nombre); txt('#p-especie', P.especie, true); txt('#p-tipo', P.tipo); txt('#p-ubic', P.ubicacion, true);
+        txt('#p-dev', P.device ? '📡 ' + P.device : '', true);
         txt('#p-desc', P.descripcion, true); txt('#p-riego', P.riego); txt('#p-luz', P.luz); txt('#p-temp', P.temp);
         var row = $('#p-chips'); row.innerHTML = '';
         data.list.forEach(function (p) {
@@ -196,7 +205,7 @@
 
       /* Errores por campo: se muestran bajo cada campo, se validan al salir de él y se limpian al corregir */
       var FIELDS_READY = true;
-      var FIELDS = { nombre: '#f-nombre', especie: '#f-especie', tipo: '#f-tipo', ubicacion: '#f-ubic', riego: '#f-riego', luz: '#f-luz', temp: '#f-temp', descripcion: '#f-desc', icono: '#f-icons' };
+      var FIELDS = { nombre: '#f-nombre', especie: '#f-especie', tipo: '#f-tipo', ubicacion: '#f-ubic', riego: '#f-riego', luz: '#f-luz', temp: '#f-temp', descripcion: '#f-desc', device: '#f-dev', icono: '#f-icons' };
       function readForm() { var v = { icono: sel }; Object.keys(ids).forEach(function (k) { v[k] = $(ids[k]).value; }); return v; }
       function ctx() { return { list: data.list, editingId: editing, adding: !editing }; }
       function showErr(k, msg) {
