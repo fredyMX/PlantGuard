@@ -134,3 +134,5 @@
 .sw[aria-checked="true"]::after {
     transform: translateX(22px)
 }
+/* Origen de los datos (simulación o ESP32) */
+.hero .src { display: block; margin-top: 6px; font-size: 12px; opacity: .75; }
