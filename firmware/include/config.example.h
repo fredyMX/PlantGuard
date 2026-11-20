@@ -7,8 +7,8 @@
 #pragma once
 
 /* ---------- Red WiFi (solo 2.4 GHz: el ESP32 no ve redes de 5 GHz) ---------- */
-#define WIFI_SSID "CASA_ALEO"
-#define WIFI_PASS "Un1DdefXxCbV"
+#define WIFI_SSID "INFINITUM7101_2.4"
+#define WIFI_PASS "2YLZNvdntz"
 
 /* ---------- Firebase (los mismos datos que js/firebase-config.js) ---------- */
 #define FIREBASE_API_KEY    "AIzaSyDr8YW4EE654dXkHLdpDWI3wsHBT3E80BA"
@@ -30,12 +30,20 @@
    Mira el valor "raw" en el Monitor Serie (115200 baudios):
    - SECO:   sensor al aire, limpio y seco
    - MOJADO: sensor metido en un vaso de agua hasta la línea blanca                  */
+/* Sensor CAPACITIVO v1.2 (negro, una sola pieza): */
 #define SOIL_RAW_DRY 2900
 #define SOIL_RAW_WET 1250
-/* Fuera de este rango se considera que el sensor está desconectado o dañado
+#define SOIL_RAW_MAX_VALID 3950
+
+/* Sensor RESISTIVO FC-28 / YL-69 (horquilla + módulo azul LM393). Usa la salida AO, no DO,
+   y aliméntalo con 3V3 (con 5 V la salida AO puede pasar de 3.3 V y dañar el ESP32).
+   Al aire marca ~4095 (el máximo), por eso SOIL_RAW_MAX_VALID va en 4096.                   */
+// #define SOIL_RAW_DRY 4095
+// #define SOIL_RAW_WET 1500          /* cámbialo por el raw que veas con la horquilla en un vaso de agua */
+// #define SOIL_RAW_MAX_VALID 4096
+/* Por debajo de este valor se considera que el sensor está desconectado
    (con una resistencia de 100 kΩ de GPIO34 a GND, un sensor desconectado lee ~0). */
 #define SOIL_RAW_MIN_VALID 150
-#define SOIL_RAW_MAX_VALID 3950
 
 /* ---------- Riego: valores por defecto (la app los reemplaza al guardar Umbrales) ---------- */
 #define DEFAULT_THR      35          /* % de humedad mínima */
@@ -54,6 +62,9 @@
 #define LOCAL_EVERY_MS   3000UL
 
 /* ---------- Envío a la nube (cuida la cuota gratuita de Firestore) ---------- */
-#define STATE_EVERY_MS    10000UL    /* estado en vivo (lo que ve Inicio) */
+#define STATE_EVERY_MS    10000UL    /* estado en vivo si nada cambia (lo que ve Inicio) */
+#define SOIL_EVERY_MS      1000UL    /* lectura del sensor de suelo */
+#define SOIL_SEND_DELTA    2.0f      /* si la humedad cambia este % o más, se envía de inmediato... */
+#define STATE_MIN_MS       2000UL    /* ...pero nunca más de un envío cada 2 s */
 #define POLL_EVERY_MS      5000UL    /* revisar órdenes y umbrales nuevos */
 #define READING_EVERY_MS 300000UL    /* lectura guardada en el historial (5 min) */

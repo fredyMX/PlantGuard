@@ -6,8 +6,8 @@
 #pragma once
 
 /* ---------- Red WiFi (solo 2.4 GHz: el ESP32 no ve redes de 5 GHz) ---------- */
-#define WIFI_SSID "CASA_ALEO"
-#define WIFI_PASS "Un1DdefXxCbV"
+#define WIFI_SSID "INFINITUM7101_2.4"
+#define WIFI_PASS "2YLZNvdntz"
 
 /* ---------- Firebase (los mismos datos que js/firebase-config.js) ---------- */
 #define FIREBASE_API_KEY    "AIzaSyDr8YW4EE654dXkHLdpDWI3wsHBT3E80BA"
