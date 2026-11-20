@@ -21,20 +21,23 @@
 #define PIN_SOIL   34      /* salida AOUT del sensor capacitivo. Usa SOLO pines ADC1 (32-39): ADC2 no funciona con WiFi */
 #define PIN_DHT    4       /* DATA del DHT11/DHT22 */
 #define DHT_TYPE   DHT22   /* cambia a DHT11 si tienes el azul */
-#define PIN_RELAY  26      /* IN del módulo relé */
-#define RELAY_ACTIVE_LOW true   /* la mayoría de los módulos relé se activan con LOW; si tu bomba funciona al revés, pon false */
+#define PIN_RELAY  23      /* resistencia de 1k → base del transistor del relé */
+#define RELAY_ACTIVE_LOW false  /* tu relé se activa con HIGH (transistor). Si la bomba se prende sola al arrancar, pon true */
 #define PIN_LED    2       /* LED integrado: fijo = conectado a la nube, parpadeando = sin conexión */
 
 /* ---------- Calibración del sensor de suelo (ver firmware/README.md) ----------
    Mira el valor "raw" en el Monitor Serie (115200 baudios):
    - SECO:   sensor al aire, limpio y seco
    - MOJADO: sensor metido en un vaso de agua hasta la línea blanca                  */
-#define SOIL_RAW_DRY 2900
-#define SOIL_RAW_WET 1250
-/* Fuera de este rango se considera que el sensor está desconectado o dañado
+/* Sensor RESISTIVO FC-28 / YL-69 (horquilla + módulo azul LM393). Usa la salida AO, no DO,
+   y aliméntalo con 3V3 (con 5 V la salida AO puede pasar de 3.3 V y dañar el ESP32).
+   Al aire marca ~4095 (el máximo), por eso SOIL_RAW_MAX_VALID va en 4096.                   */
+#define SOIL_RAW_DRY 4095
+#define SOIL_RAW_WET 1500          /* cámbialo por el raw que veas con la horquilla en un vaso de agua */
+#define SOIL_RAW_MAX_VALID 4096
+/* Por debajo de este valor se considera que el sensor está desconectado
    (con una resistencia de 100 kΩ de GPIO34 a GND, un sensor desconectado lee ~0). */
 #define SOIL_RAW_MIN_VALID 150
-#define SOIL_RAW_MAX_VALID 3950
 
 /* ---------- Riego: valores por defecto (la app los reemplaza al guardar Umbrales) ---------- */
 #define DEFAULT_THR      35          /* % de humedad mínima */
@@ -49,10 +52,13 @@
    Formato: {"humedad":2500,"humedadPct":38.5,"soilOk":true,"temp":23.1,"hum":55,"bomba":false,"id":"pg-a1b2c3"}
    "humedad" es el valor CRUDO del sensor, igual que en el código anterior.
    Vacío "" = desactivado.                                                                          */
-#define LOCAL_SERVER_URL /*"http://192.168.3.80:3000/datos-sensor"*/   /* "" para desactivarlo */
+#define LOCAL_SERVER_URL ""   /* apagado. Para usar tu servidor local: "http://192.168.3.80:3000/datos-sensor" */
 #define LOCAL_EVERY_MS   3000UL
 
 /* ---------- Envío a la nube (cuida la cuota gratuita de Firestore) ---------- */
-#define STATE_EVERY_MS    10000UL    /* estado en vivo (lo que ve Inicio) */
+#define STATE_EVERY_MS    10000UL    /* estado en vivo si nada cambia (lo que ve Inicio) */
+#define SOIL_EVERY_MS      1000UL    /* lectura del sensor de suelo */
+#define SOIL_SEND_DELTA    2.0f      /* si la humedad cambia este % o más, se envía de inmediato... */
+#define STATE_MIN_MS       2000UL    /* ...pero nunca más de un envío cada 2 s */
 #define POLL_EVERY_MS      5000UL    /* revisar órdenes y umbrales nuevos */
 #define READING_EVERY_MS 300000UL    /* lectura guardada en el historial (5 min) */
