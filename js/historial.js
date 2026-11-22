@@ -14,7 +14,7 @@
   ].join('');
 
   var key = 'h', range = 'live', sec, chart, sig = '';
-  var ICON = { auto: '💧', manual: '🖐', stop: '⏹', crit: '⚠️', off: '📡', on: '✅' };
+  var ICON = { auto: '💧', manual: '🖐', stop: '⏹', crit: '⚠️', off: '📡', on: '✅', pausa: '⏸' };
 
   function lab(t) {
     var d = new Date(t), TZ = PG.sim.TZ;

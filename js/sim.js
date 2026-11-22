@@ -201,6 +201,8 @@
     for (i = H.events.length - 1; i >= 0; i--) if (H.events[i].type === 'auto' || H.events[i].type === 'manual') { last = H.events[i]; break; }
     var rem = S.lastEnd + waitMs() - now(), l = level('soil', S.soil);
     return {
+      apagadoAutomaticoAl: devInfo() && devInfo().max ? devInfo().max + '% de humedad (ESP32)' : undefined,
+      pausaDeSeguridad: devInfo() ? !!devInfo().pausa : undefined,
       fuenteDatos: devInfo() ? 'ESP32 real «' + devInfo().id + '»' + (devInfo().online ? '' : ' (sin conexión)') : 'Simulación en el navegador',
       nombrePlanta: (PG.plant ? PG.plant.nombre + (PG.plant.especie ? ' (' + PG.plant.especie + ')' : '') : 'La Dormilona (Mimosa pudica)'),
       ubicacion: PG.plant ? PG.plant.tipo + (PG.plant.ubicacion ? ', ' + PG.plant.ubicacion : '') : 'Interior, Sala junto a la ventana',
@@ -222,7 +224,10 @@
 
   PG.sim = {
     level: level, fmtWhen: fmtWhen, toast: toast, TZ: TZ, liveData: liveData, _tick: tick, select: select,
-    waitLeft: function () { return S.lastEnd ? Math.max(0, Math.ceil((S.lastEnd + waitMs() - now()) / 1000)) : 0; },
+    waitLeft: function () {
+      var d = devInfo(), ms = d && d.cfg && d.cfg.waitMs ? d.cfg.waitMs : waitMs(); /* con ESP32: la espera que él tiene aplicada */
+      return S.lastEnd ? Math.max(0, Math.ceil((S.lastEnd + ms - now()) / 1000)) : 0;
+    },
     toggle: function () {
       if (devInfo()) { if (PG.device) PG.device.toggle(cur); return; } /* con ESP32 la orden va a la nube */
       if (S.pump) stopPump(); else startPump('manual');
@@ -275,6 +280,7 @@
       d.t = t; d.wait = false; d.online = now() - t < ONLINE_MS;
       d.rssi = e.rssi; d.fw = e.fw; d.ip = e.ip; d.cmdAck = e.cmdAck; d.dhtOk = e.dhtOk !== false; d.raw = e.soilRaw;
       d.cfg = { thr: e.thr, dur: e.dur, waitMs: e.waitMs };
+      d.max = e.max; d.pausa = !!e.pausa; /* firmware 1.3: se apaga al llegar a max; pausa de seguridad tras un corte por tiempo */
       if (typeof e.soil === 'number') o.soil = e.soil;
       if (typeof e.temp === 'number') o.temp = e.temp;
       if (typeof e.hum === 'number') o.hum = e.hum;
@@ -294,7 +300,7 @@
       var p = byId(id); if (!p || !p.device) return;
       ensure(p);
       var h = histOf(id), last = h.events.length ? h.events[h.events.length - 1].t : 0, any = false;
-      var KIND = { crit: 'bad', off: 'bad', on: 'ok', auto: 'info' };
+      var KIND = { crit: 'bad', off: 'bad', on: 'ok', auto: 'info', pausa: 'bad' };
       list.forEach(function (e) {
         if (!(e.t > last)) return;
         h.events.push({ t: e.t, type: e.type, msg: e.msg }); any = true;

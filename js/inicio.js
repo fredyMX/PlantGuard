@@ -72,9 +72,13 @@
 
     var w = PG.sim.waitLeft();
     sec.querySelector('#sw').setAttribute('aria-checked', s.pump);
+    var wt = w >= 60 ? Math.ceil(w / 60) + ' min' : w + ' s';
     sec.querySelector('#pmsg').textContent = pend ? 'Enviando orden al ESP32…' : s.pump
-      ? (s.pumpMode === 'auto' ? 'Automático' : 'Manual') + ' · riega ' + s.pumpLeft + ' s más'
-      : (w ? 'Apagada · espera ' + (w >= 60 ? Math.ceil(w / 60) + ' min' : w + ' s') + ' para volver a regar' : 'Apagada');
+      ? (dev && dev.max && s.pumpMode === 'auto'
+        ? 'Automático · hasta ' + dev.max + '% · máx. ' + s.pumpLeft + ' s más'
+        : (s.pumpMode === 'auto' ? 'Automático' : 'Manual') + ' · riega ' + s.pumpLeft + ' s más')
+      : dev && dev.pausa ? (w ? 'Pausa de seguridad · reintenta en ' + wt : 'Pausa de seguridad')
+        : (w && !dev ? 'Apagada · espera ' + wt + ' para volver a regar' : 'Apagada');
   }
 
   PG.register('inicio', {
