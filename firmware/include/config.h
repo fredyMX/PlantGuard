@@ -1,7 +1,8 @@
 /* ============================================================
    PlantGuard · configuración del ESP32
-   Archivo PERSONAL con tu WiFi. Va en firmware/include/config.h
-   Está en .gitignore: NO lo subas a GitHub ni lo compartas.
+   1) Copia este archivo en esta misma carpeta (firmware/include) con el nombre  config.h
+   2) Llena tu red WiFi y, si hace falta, ajusta pines y calibración.
+   config.h está en .gitignore para que tu contraseña no se suba a GitHub.
    ============================================================ */
 #pragma once
 
@@ -32,23 +33,32 @@
    Resistivos (FC-28, MH-sensor-series, HW-080): usa la salida AO (no DO) y aliméntalos con 3V3.   */
 #define NUM_CANALES 2              /* 1 = una planta, 2 = dos plantas */
 
-/* Planta 1 · MH-sensor-series (resistivo, módulo LM393) */
+/* Planta 1 · sensor capacitivo v1.2 (para un resistivo FC-28/MH/HW-080 usa 4095 / ~1500 / 4096) */
 #define CH1_SOIL_PIN          34   /* D34 */
 #define CH1_RELAY_PIN         18   /* D18: IN del relevador 1 */
-#define CH1_RELAY_ACTIVE_LOW  false  /* encender = HIGH, apagar = LOW (así funciona tu relevador). Si funciona al revés, pon true */
-#define CH1_RAW_DRY         4095
-#define CH1_RAW_WET         1500
+#define CH1_RELAY_ACTIVE_LOW  true   /* la mayoría de los módulos relé se activan con LOW; si tu bomba funciona al revés, pon false */
+#define CH1_RAW_DRY         2900
+#define CH1_RAW_WET         1250
 #define CH1_RAW_MIN_VALID    150   /* menos que esto = sensor desconectado */
-#define CH1_RAW_MAX_VALID   4096
+#define CH1_RAW_MAX_VALID   3950
 
 /* Planta 2 · HW-080 (resistivo, módulo LM393) */
 #define CH2_SOIL_PIN          35   /* D35, junto a D34 */
-#define CH2_RELAY_PIN         -1   /* sin segunda bomba: la planta 2 solo se monitorea. Si consigues otro relevador, ponlo en D19 y cambia a 19 */
+#define CH2_RELAY_PIN         19   /* D19: IN del relevador 2. Pon -1 si no tienes segunda bomba (solo monitoreo) */
 #define CH2_RELAY_ACTIVE_LOW  CH1_RELAY_ACTIVE_LOW   /* igual que el 1; cámbialo si el relevador 2 funciona al revés */
 #define CH2_RAW_DRY         4095
 #define CH2_RAW_WET         1500   /* cámbialo por lo que marque el HW-080 en un vaso de agua */
 #define CH2_RAW_MIN_VALID    150
 #define CH2_RAW_MAX_VALID   4096
+
+/* Nombres de versiones anteriores (por si alguien compila con un main.cpp viejo: usa la planta 1) */
+#define PIN_SOIL           CH1_SOIL_PIN
+#define PIN_RELAY          CH1_RELAY_PIN
+#define RELAY_ACTIVE_LOW   CH1_RELAY_ACTIVE_LOW
+#define SOIL_RAW_DRY       CH1_RAW_DRY
+#define SOIL_RAW_WET       CH1_RAW_WET
+#define SOIL_RAW_MIN_VALID CH1_RAW_MIN_VALID
+#define SOIL_RAW_MAX_VALID CH1_RAW_MAX_VALID
 
 /* ---------- Riego (valores iniciales; cada planta cambia los suyos en la app → Umbrales → Guardar) ----------
    Igual que tu código de riego automático:
@@ -68,7 +78,7 @@
    Formato: {"humedad":2500,"humedadPct":38.5,"soilOk":true,"temp":23.1,"hum":55,"bomba":false,"id":"pg-a1b2c3"}
    "humedad" es el valor CRUDO del sensor, igual que en el código anterior.
    Vacío "" = desactivado.                                                                          */
-#define LOCAL_SERVER_URL ""   /* apagado. Para usar tu servidor local: "http://192.168.3.80:3000/datos-sensor" */
+#define LOCAL_SERVER_URL ""          /* ej.: "http://192.168.3.80:3000/datos-sensor" */
 #define LOCAL_EVERY_MS   3000UL
 
 /* ---------- Envío a la nube (cuida la cuota gratuita de Firestore) ----------
