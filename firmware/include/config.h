@@ -6,8 +6,8 @@
 #pragma once
 
 /* ---------- Red WiFi (solo 2.4 GHz: el ESP32 no ve redes de 5 GHz) ---------- */
-#define WIFI_SSID "CASA_ALEO"
-#define WIFI_PASS "Un1DdefXxCbV"
+#define WIFI_SSID "INFINITUM889E"
+#define WIFI_PASS "FqUnNUfwRk"
 
 /* ---------- Firebase (los mismos datos que js/firebase-config.js) ---------- */
 #define FIREBASE_API_KEY    "AIzaSyDr8YW4EE654dXkHLdpDWI3wsHBT3E80BA"
@@ -17,29 +17,40 @@
    en el Monitor Serie al encender. Ese ID es el que escribes en la app (Mi planta → Editar). */
 #define DEVICE_ID ""
 
-/* ---------- Pines ---------- */
-#define PIN_SOIL   34      /* salida AOUT del sensor capacitivo. Usa SOLO pines ADC1 (32-39): ADC2 no funciona con WiFi */
-#define PIN_DHT    4       /* DATA del DHT11/DHT22 */
+/* ---------- Pines compartidos ---------- */
+#define PIN_DHT    4       /* DATA del DHT11/DHT22 (uno solo para las dos plantas) */
 #define DHT_TYPE   DHT22   /* cambia a DHT11 si tienes el azul */
-#define PIN_RELAY  18      /* D18: IN del relevador, igual que en tu código de riego */
-#define RELAY_ACTIVE_LOW false  /* encender = HIGH, apagar = LOW (igual que tu código que sí funcionaba). Si la bomba funciona al revés, pon true */
 #define PIN_LED    2       /* LED integrado: fijo = conectado a la nube, parpadeando = sin conexión */
 
-/* ---------- Calibración del sensor de suelo (ver firmware/README.md) ----------
-   Mira el valor "raw" en el Monitor Serie (115200 baudios):
-   - SECO:   sensor al aire, limpio y seco
-   - MOJADO: sensor metido en un vaso de agua hasta la línea blanca                  */
-/* Sensor RESISTIVO FC-28 / YL-69 (horquilla + módulo azul LM393). Usa la salida AO, no DO,
-   y aliméntalo con 3V3 (con 5 V la salida AO puede pasar de 3.3 V y dañar el ESP32).
-   Al aire marca ~4095 (el máximo), por eso SOIL_RAW_MAX_VALID va en 4096.                   */
-#define SOIL_RAW_DRY 4095
-#define SOIL_RAW_WET 1500          /* cámbialo por el raw que veas con la horquilla en un vaso de agua */
-#define SOIL_RAW_MAX_VALID 4096
-/* Por debajo de este valor se considera que el sensor está desconectado
-   (con una resistencia de 100 kΩ de GPIO34 a GND, un sensor desconectado lee ~0). */
-#define SOIL_RAW_MIN_VALID 150
+/* ---------- Plantas (canales) ----------
+   Cada canal = un sensor de suelo + una bomba = una planta en la app.
+   - Planta 1 usa el ID que sale en el Monitor Serie (ej. pg-205cdc)
+   - Planta 2 usa el mismo ID con "-2" al final (ej. pg-205cdc-2)
+   Sensores: SOLO pines ADC1 (GPIO32-39), porque ADC2 no funciona con WiFi.
+   Calibración: mira el "Lectura" de cada planta en el Monitor Serie
+     RAW_DRY = sensor al aire · RAW_WET = sensor en un vaso de agua.
+   Resistivos (FC-28, MH-sensor-series, HW-080): usa la salida AO (no DO) y aliméntalos con 3V3.   */
+#define NUM_CANALES 2              /* 1 = una planta, 2 = dos plantas */
 
-/* ---------- Riego (los primeros tres se cambian desde la app → Umbrales → Guardar) ----------
+/* Planta 1 · MH-sensor-series (resistivo, módulo LM393) */
+#define CH1_SOIL_PIN          34   /* D34 */
+#define CH1_RELAY_PIN         18   /* D18: IN del relevador 1 */
+#define CH1_RELAY_ACTIVE_LOW  false  /* encender = HIGH, apagar = LOW (así funciona tu relevador). Si funciona al revés, pon true */
+#define CH1_RAW_DRY         4095
+#define CH1_RAW_WET         1500
+#define CH1_RAW_MIN_VALID    150   /* menos que esto = sensor desconectado */
+#define CH1_RAW_MAX_VALID   4096
+
+/* Planta 2 · HW-080 (resistivo, módulo LM393) */
+#define CH2_SOIL_PIN          35   /* D35, junto a D34 */
+#define CH2_RELAY_PIN         -1   /* sin segunda bomba: la planta 2 solo se monitorea. Si consigues otro relevador, ponlo en D19 y cambia a 19 */
+#define CH2_RELAY_ACTIVE_LOW  CH1_RELAY_ACTIVE_LOW   /* igual que el 1; cámbialo si el relevador 2 funciona al revés */
+#define CH2_RAW_DRY         4095
+#define CH2_RAW_WET         1500   /* cámbialo por lo que marque el HW-080 en un vaso de agua */
+#define CH2_RAW_MIN_VALID    150
+#define CH2_RAW_MAX_VALID   4096
+
+/* ---------- Riego (valores iniciales; cada planta cambia los suyos en la app → Umbrales → Guardar) ----------
    Igual que tu código de riego automático:
    - humedad < DEFAULT_THR                 → se ENCIENDE la bomba        (HUMEDAD_MIN)
    - humedad ≥ DEFAULT_THR + HUMEDAD_RANGO → se APAGA la bomba           (HUMEDAD_MAX)
@@ -60,10 +71,11 @@
 #define LOCAL_SERVER_URL ""   /* apagado. Para usar tu servidor local: "http://192.168.3.80:3000/datos-sensor" */
 #define LOCAL_EVERY_MS   3000UL
 
-/* ---------- Envío a la nube (cuida la cuota gratuita de Firestore) ---------- */
-#define STATE_EVERY_MS    10000UL    /* estado en vivo si nada cambia (lo que ve Inicio) */
-#define SOIL_EVERY_MS      1000UL    /* lectura del sensor de suelo */
-#define SOIL_SEND_DELTA    2.0f      /* si la humedad cambia este % o más, se envía de inmediato... */
-#define STATE_MIN_MS       2000UL    /* ...pero nunca más de un envío cada 2 s */
-#define POLL_EVERY_MS      5000UL    /* revisar órdenes y umbrales nuevos */
+/* ---------- Envío a la nube (cuida la cuota gratuita de Firestore) ----------
+   Con 2 plantas todo se envía el doble; estos valores dejan margen dentro del plan gratis.   */
+#define STATE_EVERY_MS    20000UL    /* estado en vivo si nada cambia (lo que ve Inicio) */
+#define SOIL_EVERY_MS      1000UL    /* lectura de los sensores de suelo */
+#define SOIL_SEND_DELTA    3.0f      /* si la humedad cambia este % o más, se envía de inmediato... */
+#define STATE_MIN_MS       5000UL    /* ...pero nunca más de un envío cada 5 s por planta */
+#define POLL_EVERY_MS     10000UL    /* revisar órdenes y umbrales nuevos */
 #define READING_EVERY_MS  60000UL    /* lectura guardada en el historial (1 por minuto) */
