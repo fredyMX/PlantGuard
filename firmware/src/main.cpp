@@ -2,8 +2,10 @@
    PlantGuard · firmware ESP32 (Nivel 2: hardware real)
    Equipo Bytec
 
-   - Hasta 2 CANALES independientes (una planta cada uno): sensor de humedad del suelo
-     (FC-28 / MH / HW-080 o capacitivo) + bomba opcional. El DHT11/DHT22 es compartido.
+   - Hasta 2 plantas, cada una con su sensor de humedad del suelo (FC-28 / MH / HW-080
+     o capacitivo) y su umbral. El DHT11/DHT22 es compartido.
+   - Bombas: una por planta, o UNA SOLA para las dos (BOMBA_COMPARTIDA 1): se enciende
+     si alguna planta pide agua y se apaga cuando ninguna pide (como el código de 2 sensores).
    - Cada canal decide su riego AQUÍ, en el ESP32 (si se cae el WiFi se sigue regando):
        · humedad < umbral mínimo              → se ENCIENDE la bomba
        · humedad ≥ umbral + HUMEDAD_RANGO     → se APAGA (entre ambos conserva su estado)
@@ -32,7 +34,7 @@
 #error "Falta include/config.h: copia include/config.example.h como include/config.h y escribe tu WiFi."
 #endif
 
-#define FW_VERSION "1.4.2"
+#define FW_VERSION "1.5.0"
 
 #ifndef LOCAL_SERVER_URL /* por si tu config.h es de la versión 1.0.0 */
 #define LOCAL_SERVER_URL ""
@@ -107,6 +109,10 @@ static const char *const LOCAL_URL = "" LOCAL_SERVER_URL;
 #define CH2_RAW_MAX_VALID CH1_RAW_MAX_VALID
 #endif
 
+#ifndef BOMBA_COMPARTIDA
+#define BOMBA_COMPARTIDA 0 /* 1 = una sola bomba (la de la planta 1) para todas las plantas */
+#endif
+
 /* ---------------- Estado compartido entre el control (loop) y la nube (tarea) ---------------- */
 struct Cfg
 {
@@ -123,28 +129,34 @@ struct Ev
   char msg[96];
 };
 
-/* Un canal = un sensor de suelo + (opcional) una bomba = una planta en la app */
+/* Una bomba (relevador). Con BOMBA_COMPARTIDA, las dos plantas usan la misma. */
+struct Bomba
+{
+  int pin;
+  bool activeLow;
+  int owner; /* owner = planta cuyos tiempos (máximo y pausa) se usan */
+  bool on;
+  char mode[8];
+  uint32_t startMs, forMs;
+  uint32_t lastEndMs;
+  bool hasLastEnd; /* inicio de la última PAUSA DE SEGURIDAD */
+  bool pausaAntes;
+};
+
+/* Un canal = un sensor de suelo = una planta en la app */
 struct Canal
 {
-  /* conexiones y calibración (de config.h) */
-  int soilPin, relayPin;
-  bool activeLow;
-  int rawDry, rawWet, rawMin, rawMax;
-  char id[40]; /* documento en Firestore: dispositivos/{id} */
+  int soilPin;
+  int rawDry, rawWet, rawMin, rawMax; /* conexiones y calibración (de config.h) */
+  char id[40];                        /* documento en Firestore: dispositivos/{id} */
   Cfg cfg;
-  /* lecturas */
   float soilPct;
   int soilRaw;
   bool soilOk, haveSoil, sensorFirst;
   int bad, good;
-  /* bomba y riego */
-  bool pumpOn;
-  char pumpMode[8];
-  uint32_t pumpStartMs, pumpForMs;
-  uint32_t lastEndMs;
-  bool hasLastEnd; /* inicio de la última PAUSA DE SEGURIDAD */
-  bool critFlag, pausaAntes;
-  /* órdenes de la app y envío */
+  bool pideAgua; /* igual que tu código: baja del mínimo → pide; llega al máximo → deja de pedir */
+  bool critFlag;
+  int bomba; /* índice en bombas[], o -1 si esta planta no tiene bomba */
   int pendingCmd;
   int64_t pendingCmdId, cmdAck, lastCmdId;
   volatile bool stateDirty;
@@ -157,6 +169,8 @@ static SemaphoreHandle_t mtx;
 #define UNLOCK() xSemaphoreGive(mtx)
 
 static Canal ch[NUM_CANALES];
+static Bomba bombas[NUM_CANALES];
+static int numBombas = 0;
 static float tempC = 0, humPct = 0;
 static bool dhtOk = false, haveDht = false;
 static volatile bool cloudOk = false;
@@ -208,34 +222,38 @@ static void pushEvent(int c, const char *type, const char *msg)
   strncpy(evq[i].msg, msg, sizeof(evq[i].msg) - 1);
   evq[i].msg[sizeof(evq[i].msg) - 1] = 0;
   evCount++;
+  ch[c].stateDirty = true;
   Serial.printf("[evento P%d] %s · %s\n", c + 1, type, msg);
 }
 static void pushEventAll(const char *type, const char *msg)
 {
   for (int c = 0; c < NUM_CANALES; c++)
-  {
     pushEvent(c, type, msg);
-    ch[c].stateDirty = true;
-  }
+}
+static void pushEventBomba(int b, const char *type, const char *msg)
+{ /* a todas las plantas que riega esa bomba */
+  for (int c = 0; c < NUM_CANALES; c++)
+    if (ch[c].bomba == b)
+      pushEvent(c, type, msg);
 }
 
 /* ---------------- Bomba ---------------- */
-static void controlarBomba(Canal &k, bool encender)
+static void controlarBomba(Bomba &p, bool encender)
 { /* igual que en tu código de riego */
-  if (k.relayPin < 0)
-    return; /* canal sin bomba */
-  if (k.activeLow)
-    digitalWrite(k.relayPin, encender ? LOW : HIGH); /* activo en LOW: LOW = bomba encendida */
+  if (p.activeLow)
+    digitalWrite(p.pin, encender ? LOW : HIGH); /* activo en LOW: LOW = bomba encendida */
   else
-    digitalWrite(k.relayPin, encender ? HIGH : LOW); /* activo en HIGH: HIGH = bomba encendida */
+    digitalWrite(p.pin, encender ? HIGH : LOW); /* activo en HIGH: HIGH = bomba encendida */
 }
+static const char *nivel(const Bomba &p) { return (p.on == p.activeLow) ? "LOW" : "HIGH"; } /* nivel real del pin */
 
 static int humedadMax(const Canal &k)
 {
   int m = k.cfg.thr + HUMEDAD_RANGO;
   return m > 100 ? 100 : m;
 }
-static bool enPausa(const Canal &k) { return k.hasLastEnd && (uint32_t)(millis() - k.lastEndMs) < k.cfg.waitMs; }
+static const Cfg &cfgBomba(const Bomba &p) { return ch[p.owner].cfg; }
+static bool enPausa(const Bomba &p) { return p.hasLastEnd && (uint32_t)(millis() - p.lastEndMs) < cfgBomba(p).waitMs; }
 static void fmtSeg(char *b, size_t n, uint32_t ms)
 {
   if (ms < 120000)
@@ -244,28 +262,34 @@ static void fmtSeg(char *b, size_t n, uint32_t ms)
     snprintf(b, n, "%lu min", (unsigned long)(ms / 60000));
 }
 
-static void startPump(int c, const char *mode, int seconds)
+/* who = planta que pidió el riego (para el mensaje) */
+static void startPump(int b, int who, const char *mode, int seconds)
 { /* con LOCK */
-  Canal &k = ch[c];
-  if (k.pumpOn || k.relayPin < 0)
+  Bomba &p = bombas[b];
+  if (p.on)
     return;
   if (seconds > PUMP_MAX_S)
     seconds = PUMP_MAX_S;
   if (seconds < 1)
     seconds = 1;
-  k.pumpOn = true;
-  controlarBomba(k, true);
-  strncpy(k.pumpMode, mode, sizeof(k.pumpMode) - 1);
-  k.pumpMode[sizeof(k.pumpMode) - 1] = 0;
-  k.pumpStartMs = millis();
-  k.pumpForMs = (uint32_t)seconds * 1000;
+  p.on = true;
+  controlarBomba(p, true);
+  strncpy(p.mode, mode, sizeof(p.mode) - 1);
+  p.mode[sizeof(p.mode) - 1] = 0;
+  p.startMs = millis();
+  p.forMs = (uint32_t)seconds * 1000;
+  const Canal &k = ch[who];
   char m[96];
   if (strcmp(mode, "auto") == 0)
-    snprintf(m, sizeof m, "Humedad baja (%d%%): bomba encendida · se apaga al llegar a %d%%", (int)roundf(k.soilPct), humedadMax(k));
+  {
+    if (BOMBA_COMPARTIDA && NUM_CANALES > 1)
+      snprintf(m, sizeof m, "Planta %d pide agua (%d%%): bomba encendida", who + 1, (int)roundf(k.soilPct));
+    else
+      snprintf(m, sizeof m, "Humedad baja (%d%%): bomba encendida · se apaga al llegar a %d%%", (int)roundf(k.soilPct), humedadMax(k));
+  }
   else
     snprintf(m, sizeof m, "Riego manual iniciado · humedad al %d%%", (int)roundf(k.soilPct));
-  pushEvent(c, mode, m);
-  k.stateDirty = true;
+  pushEventBomba(b, mode, m);
 }
 
 enum
@@ -276,35 +300,73 @@ enum
   STOP_SENSOR
 };
 
-static void stopPump(int c, int why)
+static void stopPump(int b, int why)
 { /* con LOCK */
-  Canal &k = ch[c];
-  if (!k.pumpOn)
+  Bomba &p = bombas[b];
+  if (!p.on)
     return;
-  controlarBomba(k, false);
-  k.pumpOn = false;
-  bool autom = strcmp(k.pumpMode, "auto") == 0;
-  int sec = (int)roundf((millis() - k.pumpStartMs) / 1000.0f), h = (int)roundf(k.soilPct);
+  controlarBomba(p, false);
+  p.on = false;
+  bool autom = strcmp(p.mode, "auto") == 0;
+  int sec = (int)roundf((millis() - p.startMs) / 1000.0f);
   char m[96], w[16];
-  k.stateDirty = true;
+  fmtSeg(w, sizeof w, cfgBomba(p).waitMs);
   if (why == STOP_META)
-    snprintf(m, sizeof m, "Humedad alcanzada (%d%%): bomba apagada tras %d s", h, sec);
+    snprintf(m, sizeof m, "Humedad alcanzada: bomba apagada tras %d s", sec);
   else if (why == STOP_TIEMPO && autom)
   { /* igual que tu código: corte por tiempo → pausa */
-    k.lastEndMs = millis();
-    k.hasLastEnd = true;
-    fmtSeg(w, sizeof w, k.cfg.waitMs);
-    snprintf(m, sizeof m, "Tiempo máximo (%d s) sin llegar al %d%%: pausa de %s (revisa sensor o agua)", sec, humedadMax(k), w);
-    pushEvent(c, "pausa", m);
+    p.lastEndMs = millis();
+    p.hasLastEnd = true;
+    snprintf(m, sizeof m, "Tiempo máximo (%d s) sin llegar a la humedad: pausa de %s (revisa sensor o agua)", sec, w);
+    pushEventBomba(b, "pausa", m);
     return;
   }
   else if (why == STOP_TIEMPO)
-    snprintf(m, sizeof m, "Riego manual terminado · duró %d s (humedad al %d%%)", sec, h);
+    snprintf(m, sizeof m, "Riego manual terminado · duró %d s", sec);
+  else if (why == STOP_APP && autom)
+  { /* apagada desde la app a mitad de un riego automático: */
+    p.lastEndMs = millis();
+    p.hasLastEnd = true; /* pausa, para que no se vuelva a prender al segundo siguiente */
+    snprintf(m, sizeof m, "Bomba apagada desde la app tras %d s · riego automático en pausa %s", sec, w);
+  }
   else if (why == STOP_APP)
-    snprintf(m, sizeof m, "Bomba apagada desde la app · duró %d s (humedad al %d%%)", sec, h);
+    snprintf(m, sizeof m, "Bomba apagada desde la app · duró %d s", sec);
   else
     snprintf(m, sizeof m, "Riego detenido: sin lectura del sensor de suelo (duró %d s)", sec);
-  pushEvent(c, "stop", m);
+  pushEventBomba(b, "stop", m);
+}
+
+/* Decide cada bomba según las plantas que riega (igual que tu código de 2 sensores y 1 bomba):
+   se ENCIENDE si alguna pide agua y se APAGA cuando ninguna pide.                      con LOCK */
+static void decidirBomba(int b)
+{
+  Bomba &p = bombas[b];
+  int quien = -1;
+  for (int c = 0; c < NUM_CANALES; c++)
+    if (ch[c].bomba == b && ch[c].soilOk && ch[c].pideAgua)
+    {
+      quien = c;
+      break;
+    }
+  bool pausa = enPausa(p);
+  if (p.pausaAntes && !pausa)
+  {
+    Serial.println("[bomba] fin de la pausa de seguridad");
+    for (int c = 0; c < NUM_CANALES; c++)
+      if (ch[c].bomba == b)
+        ch[c].stateDirty = true;
+  }
+  p.pausaAntes = pausa;
+  if (p.on && strcmp(p.mode, "auto") == 0 && quien < 0)
+  {
+    bool sensorMal = false; /* ¿se apaga porque un sensor dejó de leer? */
+    for (int c = 0; c < NUM_CANALES; c++)
+      if (ch[c].bomba == b && !ch[c].soilOk)
+        sensorMal = true;
+    stopPump(b, sensorMal ? STOP_SENSOR : STOP_META);
+  }
+  else if (!p.on && quien >= 0 && !pausa)
+    startPump(b, quien, "auto", cfgBomba(p).dur);
 }
 
 /* ---------------- Sensores ---------------- */
@@ -367,13 +429,15 @@ static void soilStep(int c)
       k.soilOk = false;
       k.stateDirty = true;
       pushEvent(c, "off", "Sensor de suelo desconectado");
-      if (k.pumpOn && strcmp(k.pumpMode, "auto") == 0)
-        stopPump(c, STOP_SENSOR); /* sin lectura no se riega a ciegas */
     }
   }
 
   if (k.soilOk)
   {
+    if (!k.pideAgua && k.soilPct < k.cfg.thr)
+      k.pideAgua = true; /* tu código: baja del mínimo → PIDE AGUA */
+    else if (k.pideAgua && k.soilPct >= humedadMax(k))
+      k.pideAgua = false; /* llega al máximo → OK */
     bool crit = k.soilPct < k.cfg.thr - 10;
     if (crit && !k.critFlag)
     {
@@ -382,27 +446,15 @@ static void soilStep(int c)
       pushEvent(c, "crit", m);
     }
     k.critFlag = crit;
-    bool pausa = enPausa(k);
-    if (k.pausaAntes && !pausa)
-    {
-      Serial.printf("[P%d] fin de la pausa de seguridad\n", c + 1);
-      k.stateDirty = true;
-    }
-    k.pausaAntes = pausa;
-    if (k.pumpOn && strcmp(k.pumpMode, "auto") == 0 && k.soilPct >= humedadMax(k))
-      stopPump(c, STOP_META);
-    else if (!k.pumpOn && k.relayPin >= 0 && k.soilPct < k.cfg.thr && !pausa)
-      startPump(c, "auto", k.cfg.dur);
   }
-  const char *bomba = k.relayPin < 0 ? "sin bomba"
-                      : k.pumpOn     ? (strcmp(k.pumpMode, "auto") == 0 ? "ENCENDIDA (auto)" : "ENCENDIDA (manual)")
-                      : enPausa(k)   ? "PAUSA DE SEGURIDAD"
-                                     : "APAGADA";
+  else
+    k.pideAgua = false; /* sin lectura no se riega a ciegas */
   int hMin = k.cfg.thr, hMax = humedadMax(k);
+  bool pide = k.pideAgua;
   UNLOCK();
 
-  Serial.printf("[P%d %s] Lectura: %4d | Humedad: %3d %% %s| Bomba: %s | rango %d-%d %%\n",
-                c + 1, k.id, raw, (int)roundf(pct), valid ? "" : "(FUERA DE RANGO) ", bomba, hMin, hMax);
+  Serial.printf("[P%d %s] Lectura: %4d | Humedad: %3d %% %s| %s | rango %d-%d %%\n",
+                c + 1, k.id, raw, (int)roundf(pct), valid ? "" : "(FUERA DE RANGO) ", pide ? "PIDE AGUA" : "OK", hMin, hMax);
 }
 
 static void dhtStep()
@@ -653,18 +705,22 @@ static bool sendState(int c)
     putNull(e, "hum");
   }
   putB(e, "dhtOk", dhtOk);
-  putB(e, "hasPump", k.relayPin >= 0);
-  putB(e, "pump", k.pumpOn);
-  putS(e, "pumpMode", k.pumpOn ? k.pumpMode : "");
-  int32_t remMs = k.pumpOn ? (int32_t)k.pumpForMs - (int32_t)(millis() - k.pumpStartMs) : 0;
+  bool hp = k.bomba >= 0;
+  Bomba *p = hp ? &bombas[k.bomba] : nullptr;
+  putB(e, "hasPump", hp);
+  putB(e, "pump", hp && p->on);
+  putS(e, "pumpMode", hp && p->on ? p->mode : "");
+  int32_t remMs = hp && p->on ? (int32_t)p->forMs - (int32_t)(millis() - p->startMs) : 0;
   putI(e, "pumpLeft", remMs > 0 ? (remMs + 999) / 1000 : 0);
-  putI(e, "lastEnd", k.hasLastEnd ? msToEpoch(k.lastEndMs) : 0); /* inicio de la pausa de seguridad */
-  putI(e, "max", humedadMax(k));                                 /* la bomba se apaga al llegar aquí */
-  putB(e, "pausa", enPausa(k));
+  putI(e, "lastEnd", hp && p->hasLastEnd ? msToEpoch(p->lastEndMs) : 0); /* inicio de la pausa de seguridad */
+  putI(e, "max", humedadMax(k));                                         /* esta planta deja de pedir agua aquí */
+  putB(e, "pausa", hp && enPausa(*p));
+  putB(e, "pideAgua", k.pideAgua);
+  putB(e, "bombaCompartida", BOMBA_COMPARTIDA && NUM_CANALES > 1);
   putI(e, "cmdAck", k.cmdAck);
   putI(e, "thr", k.cfg.thr);
-  putI(e, "dur", k.cfg.dur);
-  putI(e, "waitMs", k.cfg.waitMs);
+  putI(e, "dur", hp ? cfgBomba(*p).dur : k.cfg.dur);
+  putI(e, "waitMs", hp ? cfgBomba(*p).waitMs : k.cfg.waitMs);
   putI(e, "canal", c + 1);
   k.stateDirty = false;
   UNLOCK();
@@ -748,7 +804,7 @@ static void sendLocal()
     d["temp"] = r1(tempC);
     d["hum"] = (int)roundf(humPct);
   }
-  d["bomba"] = ch[0].pumpOn;
+  d["bomba"] = ch[0].bomba >= 0 && bombas[ch[0].bomba].on;
   d["id"] = String(ch[0].id);
   JsonArray a = d["canales"].to<JsonArray>();
   for (int c = 0; c < NUM_CANALES; c++)
@@ -758,7 +814,8 @@ static void sendLocal()
     o["humedad"] = ch[c].soilRaw;
     o["humedadPct"] = r1(ch[c].soilPct);
     o["soilOk"] = ch[c].soilOk;
-    o["bomba"] = ch[c].pumpOn;
+    o["pideAgua"] = ch[c].pideAgua;
+    o["bomba"] = ch[c].bomba >= 0 && bombas[ch[c].bomba].on;
   }
   UNLOCK();
   String body;
@@ -862,13 +919,11 @@ static void cloudTask(void *)
 }
 
 /* ---------------- Arranque y lazo de control ---------------- */
-static void initCanal(int c, int soilPin, int relayPin, bool activeLow, int dry, int wet, int mn, int mx)
+static void initCanal(int c, int soilPin, int dry, int wet, int mn, int mx)
 {
   Canal &k = ch[c];
   memset(&k, 0, sizeof k);
   k.soilPin = soilPin;
-  k.relayPin = relayPin;
-  k.activeLow = activeLow;
   k.rawDry = dry;
   k.rawWet = wet;
   k.rawMin = mn;
@@ -876,19 +931,33 @@ static void initCanal(int c, int soilPin, int relayPin, bool activeLow, int dry,
   k.sensorFirst = true;
   k.sentSoil = -100;
   k.stateDirty = true;
-  if (relayPin >= 0)
-  {
-    controlarBomba(k, false);
-    pinMode(relayPin, OUTPUT);
-    controlarBomba(k, false);
-  } /* bomba apagada desde el primer instante */
+  k.bomba = -1;
+}
+static int nuevaBomba(int pin, bool activeLow, int owner)
+{
+  int b = numBombas++;
+  Bomba &p = bombas[b];
+  memset(&p, 0, sizeof p);
+  p.pin = pin;
+  p.activeLow = activeLow;
+  p.owner = owner;
+  controlarBomba(p, false);
+  pinMode(pin, OUTPUT);
+  controlarBomba(p, false); /* bomba apagada desde el primer instante */
+  return b;
 }
 
 void setup()
 {
-  initCanal(0, CH1_SOIL_PIN, CH1_RELAY_PIN, CH1_RELAY_ACTIVE_LOW, CH1_RAW_DRY, CH1_RAW_WET, CH1_RAW_MIN_VALID, CH1_RAW_MAX_VALID);
+  initCanal(0, CH1_SOIL_PIN, CH1_RAW_DRY, CH1_RAW_WET, CH1_RAW_MIN_VALID, CH1_RAW_MAX_VALID);
+  if (CH1_RELAY_PIN >= 0)
+    ch[0].bomba = nuevaBomba(CH1_RELAY_PIN, CH1_RELAY_ACTIVE_LOW, 0);
 #if NUM_CANALES > 1
-  initCanal(1, CH2_SOIL_PIN, CH2_RELAY_PIN, CH2_RELAY_ACTIVE_LOW, CH2_RAW_DRY, CH2_RAW_WET, CH2_RAW_MIN_VALID, CH2_RAW_MAX_VALID);
+  initCanal(1, CH2_SOIL_PIN, CH2_RAW_DRY, CH2_RAW_WET, CH2_RAW_MIN_VALID, CH2_RAW_MAX_VALID);
+  if (BOMBA_COMPARTIDA)
+    ch[1].bomba = ch[0].bomba; /* la misma bomba riega las dos plantas */
+  else if (CH2_RELAY_PIN >= 0)
+    ch[1].bomba = nuevaBomba(CH2_RELAY_PIN, CH2_RELAY_ACTIVE_LOW, 1);
 #endif
   pinMode(PIN_LED, OUTPUT);
   Serial.begin(115200);
@@ -908,7 +977,8 @@ void setup()
   analogReadResolution(12);
 
   Serial.println("\n========================================");
-  Serial.printf(" PlantGuard ESP32 · firmware %s · %d planta(s)\n", FW_VERSION, NUM_CANALES);
+  Serial.printf(" PlantGuard ESP32 · firmware %s · %d planta(s)%s\n", FW_VERSION, NUM_CANALES,
+                BOMBA_COMPARTIDA && NUM_CANALES > 1 ? " · 1 bomba compartida" : "");
   for (int c = 0; c < NUM_CANALES; c++)
   {
     Canal &k = ch[c];
@@ -920,12 +990,13 @@ void setup()
     k.cfg.dur = prefs.getInt(prefKey("dur", c).c_str(), DEFAULT_DUR);
     k.cfg.waitMs = prefs.getUInt(prefKey("wait", c).c_str(), DEFAULT_WAIT_MS);
     analogSetPinAttenuation(k.soilPin, ADC_11db); /* rango completo 0-3.3 V */
-    if (k.relayPin >= 0)
-      Serial.printf(" Planta %d → ID: %s   (sensor GPIO%d · bomba GPIO%d, se enciende con %s)\n",
-                    c + 1, k.id, k.soilPin, k.relayPin, k.activeLow ? "LOW" : "HIGH");
-    else
-      Serial.printf(" Planta %d → ID: %s   (sensor GPIO%d · sin bomba)\n", c + 1, k.id, k.soilPin);
+    Serial.printf(" Planta %d → ID: %s   (sensor GPIO%d)\n", c + 1, k.id, k.soilPin);
   }
+  for (int b = 0; b < numBombas; b++)
+    Serial.printf(" Bomba %d → GPIO%d · se enciende con %s · ahora el pin está en %s (apagada)\n",
+                  b + 1, bombas[b].pin, bombas[b].activeLow ? "LOW" : "HIGH", nivel(bombas[b]));
+  if (!numBombas)
+    Serial.println(" Sin bomba: solo monitoreo");
   Serial.println(" (escribe cada ID en su planta: Mi planta → Editar → ID del ESP32)");
   Serial.printf(" Memoria libre: %u bytes\n", (unsigned)ESP.getFreeHeap());
   Serial.println("========================================");
@@ -948,7 +1019,20 @@ void loop()
   {
     tSoil = now;
     for (int c = 0; c < NUM_CANALES; c++)
-      soilStep(c);
+      soilStep(c); /* 1) cada sensor por su cuenta */
+    LOCK();
+    for (int b = 0; b < numBombas; b++)
+      decidirBomba(b); /* 2) qué hace cada bomba */
+    for (int b = 0; b < numBombas; b++)
+    {
+      Bomba &p = bombas[b];
+      Serial.printf("BOMBA %d (GPIO%d = %s): %s\n", b + 1, p.pin, nivel(p),
+                    p.on         ? (strcmp(p.mode, "auto") == 0 ? "ENCENDIDA (auto)" : "ENCENDIDA (manual)")
+                    : enPausa(p) ? "pausa de seguridad..."
+                                 : "APAGADA");
+    }
+    UNLOCK();
+    Serial.println("--------------------------------------------");
   }
   if (now - tDht >= 3000)
   {
@@ -965,18 +1049,22 @@ void loop()
     Canal &k = ch[c];
     if (k.pendingCmd)
     { /* orden de la app para esta planta */
-      if (k.relayPin < 0)
+      if (k.bomba < 0)
         pushEvent(c, "off", "Esta planta no tiene bomba conectada al ESP32");
       else if (k.pendingCmd == 1)
-        startPump(c, "manual", MANUAL_S);
+        startPump(k.bomba, c, "manual", MANUAL_S);
       else
-        stopPump(c, STOP_APP);
+        stopPump(k.bomba, STOP_APP);
       k.cmdAck = k.pendingCmdId;
       k.pendingCmd = 0;
       k.stateDirty = true;
     }
-    if (k.pumpOn && (uint32_t)(millis() - k.pumpStartMs) >= k.pumpForMs)
-      stopPump(c, STOP_TIEMPO); /* tiempo máximo */
+  }
+  for (int b = 0; b < numBombas; b++)
+  {
+    Bomba &p = bombas[b];
+    if (p.on && (uint32_t)(millis() - p.startMs) >= p.forMs)
+      stopPump(b, STOP_TIEMPO); /* tiempo máximo */
   }
   UNLOCK();
 
