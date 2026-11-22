@@ -36,15 +36,21 @@
         /* Con ESP32 la lógica es la del firmware: encender bajo el umbral, apagar en umbral + rango o por tiempo, y pausa */
         var rango = dev && dev.max && dev.cfg && dev.cfg.thr ? dev.max - dev.cfg.thr : 20, max = Math.min(100, PG.state.thr + rango);
         var wtxt = dm ? w + ' s' : w + ' min';
+        var comp = dev && dev.compartida; /* una bomba para las dos plantas (firmware 1.5) */
         sec.querySelector('#h1').textContent = dev
-          ? 'El ESP32 enciende la bomba bajo ' + PG.state.thr + '% y la apaga al llegar a ' + max + '%.'
+          ? (comp ? 'Esta planta pide agua bajo ' + PG.state.thr + '% y deja de pedir al llegar a ' + max + '%. La bomba se apaga cuando ninguna planta pide.'
+            : 'El ESP32 enciende la bomba bajo ' + PG.state.thr + '% y la apaga al llegar a ' + max + '%.')
           : 'Si la humedad del suelo cae por debajo de este valor, la bomba se activa automáticamente.';
-        sec.querySelector('#h2').textContent = dev
-          ? 'Si la bomba lleva este tiempo encendida sin llegar al ' + max + '%, se apaga por seguridad (revisa sensor o agua).'
-          : 'Tiempo que la bomba permanece encendida en cada riego.';
-        sec.querySelector('#h3').textContent = dev
-          ? 'Pausa de seguridad después de un corte por tiempo: ' + wtxt + '. Al terminar, el ESP32 vuelve a intentar.'
-          : 'Evita ciclos de riego demasiado frecuentes tras una activación.';
+        sec.querySelector('#h2').textContent = comp
+          ? 'Bomba compartida: el tiempo máximo y la pausa se toman de la planta principal' + (dev.canal > 1 ? ' (cámbialos ahí).' : ' y valen para las dos plantas.')
+          : dev
+            ? 'Si la bomba lleva este tiempo encendida sin llegar al ' + max + '%, se apaga por seguridad (revisa sensor o agua).'
+            : 'Tiempo que la bomba permanece encendida en cada riego.';
+        sec.querySelector('#h3').textContent = comp && dev.canal > 1
+          ? 'Con bomba compartida, la pausa de seguridad es la de la planta principal.'
+          : dev
+            ? 'Pausa de seguridad después de un corte por tiempo: ' + wtxt + '. Al terminar, el ESP32 vuelve a intentar.'
+            : 'Evita ciclos de riego demasiado frecuentes tras una activación.';
       }
       d.checked = PG.state.demo;
       d.onchange = function () { PG.set('demo', d.checked); paint(); };

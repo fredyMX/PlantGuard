@@ -184,7 +184,7 @@
   }
 
   /* ---------- ESP32 real ---------- */
-  var ONLINE_MS = 35000; /* el ESP32 manda su estado cada 10 s; si pasan 35 s sin nada, se considera sin conexión */
+  var ONLINE_MS = 50000; /* el ESP32 manda su estado cada 10-20 s; si pasan 50 s sin nada, se considera sin conexión */
   function devOf(p, r) {
     if (!r.dev || r.dev.id !== p.device) r.dev = { id: p.device, t: 0, wait: true };
     return r.dev;
@@ -280,6 +280,8 @@
       d.t = t; d.wait = false; d.online = now() - t < ONLINE_MS;
       d.rssi = e.rssi; d.fw = e.fw; d.ip = e.ip; d.cmdAck = e.cmdAck; d.dhtOk = e.dhtOk !== false; d.raw = e.soilRaw;
       d.cfg = { thr: e.thr, dur: e.dur, waitMs: e.waitMs };
+      d.compartida = !!e.bombaCompartida; d.canal = e.canal || 1; d.pide = !!e.pideAgua; /* firmware 1.5: una bomba para varias plantas */
+      d.hasPump = e.hasPump !== false; /* firmware 1.4: una planta puede ser solo monitoreo (sin bomba) */
       d.max = e.max; d.pausa = !!e.pausa; /* firmware 1.3: se apaga al llegar a max; pausa de seguridad tras un corte por tiempo */
       if (typeof e.soil === 'number') o.soil = e.soil;
       if (typeof e.temp === 'number') o.temp = e.temp;

@@ -46,6 +46,7 @@
     sec.querySelector('#hname').textContent = PG.plant ? ' · ' + PG.plant.nombre : '';
     sec.querySelector('#hv').textContent = s.ok && !wait ? r : '--';
     sec.querySelector('#fail').style.display = dev ? 'none' : '';
+    sec.querySelector('.pump').style.display = dev && dev.hasPump === false ? 'none' : ''; /* planta sin bomba: solo monitoreo */
     sec.querySelectorAll('.tile.fake').forEach(function (x) { x.style.display = dev ? 'none' : ''; }); /* presión y luz no las mide el ESP32 */
     sec.querySelector('#hsrc').textContent = !dev ? 'Datos simulados'
       : wait ? '📡 ESP32 «' + dev.id + '» · esperando datos'
@@ -74,9 +75,11 @@
     sec.querySelector('#sw').setAttribute('aria-checked', s.pump);
     var wt = w >= 60 ? Math.ceil(w / 60) + ' min' : w + ' s';
     sec.querySelector('#pmsg').textContent = pend ? 'Enviando orden al ESP32…' : s.pump
-      ? (dev && dev.max && s.pumpMode === 'auto'
-        ? 'Automático · hasta ' + dev.max + '% · máx. ' + s.pumpLeft + ' s más'
-        : (s.pumpMode === 'auto' ? 'Automático' : 'Manual') + ' · riega ' + s.pumpLeft + ' s más')
+      ? (dev && dev.compartida && s.pumpMode === 'auto'
+        ? 'Automático (bomba compartida) · máx. ' + s.pumpLeft + ' s más'
+        : dev && dev.max && s.pumpMode === 'auto'
+          ? 'Automático · hasta ' + dev.max + '% · máx. ' + s.pumpLeft + ' s más'
+          : (s.pumpMode === 'auto' ? 'Automático' : 'Manual') + ' · riega ' + s.pumpLeft + ' s más')
       : dev && dev.pausa ? (w ? 'Pausa de seguridad · reintenta en ' + wt : 'Pausa de seguridad')
         : (w && !dev ? 'Apagada · espera ' + wt + ' para volver a regar' : 'Apagada');
   }
