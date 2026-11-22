@@ -9,7 +9,7 @@ PlantGuard es un sistema de riego automático inteligente basado en IoT e inteli
 Desarrollar un sistema de riego automatizado y configurable que mantenga las plantas con la humedad adecuada, evitando tanto la falta como el exceso de agua, mediante el monitoreo en tiempo real de sensores, el control remoto del riego y una lógica de decisión inteligente que optimice cuándo y cuánto regar.
 
 ## FUNCIONALIDADES
-- [ ] Configuración inicial del dispositivo: conexión del ESP32 a la red WiFi y verificación del funcionamiento de los sensores.
+- [x] Configuración inicial del dispositivo: conexión del ESP32 a la red WiFi y verificación del funcionamiento de los sensores (ver `firmware/README.md`).
 - [x] Monitoreo en tiempo real (simulado en el navegador): visualización de la humedad del suelo, la temperatura y la humedad ambiental.
 - [x] Configuración de umbrales de riego (simulado en el navegador): el usuario define el nivel mínimo de humedad que activa el riego.
 - [x] Riego automático (simulado en el navegador): la bomba se activa cuando la humedad está por debajo del umbral, con duración limitada y tiempo de espera entre riegos para evitar el sobre-riego.
@@ -29,7 +29,7 @@ Desarrollar un sistema de riego automatizado y configurable que mantenga las pla
 
  ## PILA TECNOLOGICA
  - [ ] Hardware: ESP32, sensor capacitivo de humedad de suelo, DHT11/DHT22, módulo relé 5V, mini bomba de agua.
- - [ ] Firmware: 	Arduino IDE / PlatformIO (C++).
+ - [x] Firmware: 	PlatformIO (C++, framework Arduino).
  - [ ] Plataforma IoT: Blynk, ThingSpeak o Firebase (plan gratuito).
  - [ ] IA básica: Reglas inteligentes y, opcionalmente, scikit-learn / Edge Impulse.
  - [ ] Notificaciones: Notificaciones push de Blynk o Telegram Bot.
@@ -39,3 +39,11 @@ La versión web funciona sin ESP32 ni servidor: `js/sim.js` genera lecturas de h
 El asistente de chat responde con reglas usando los datos simulados; con `api/chat.js` desplegado en Vercel (variable `GEMINI_API_KEY`) responde con IA.
 
 Cada planta tiene su propia simulación: sensores (humedad del suelo, temperatura y humedad ambiente), bomba, umbrales, espera entre riegos, historial y alertas. Todas siguen funcionando en segundo plano aunque no sea la planta activa.
+
+## ESP32 REAL (Nivel 2)
+`firmware/` es un proyecto de PlatformIO con el programa del ESP32 (`src/main.cpp`): lee el sensor de humedad del suelo (FC-28 o capacitivo) y el DHT11/DHT22, y decide el riego por su cuenta aunque no haya WiFi: enciende la bomba bajo el umbral, la apaga al llegar a umbral + 20 % y, si pasa el tiempo máximo, hace una pausa de seguridad. Publica su estado en Firestore (`dispositivos/{ID}`) y recibe los umbrales y las órdenes de la bomba desde la app.
+
+Para usarlo con una planta, escribe el ID del ESP32 en **Mi planta → Editar → ID del ESP32**. Las plantas sin ID siguen simuladas. `js/device.js` hace el enlace en la app y `firestore.rules` tiene las reglas que hay que publicar en Firebase.
+
+Las conexiones, la calibración y la puesta en marcha están en [`firmware/README.md`](firmware/README.md).
+
