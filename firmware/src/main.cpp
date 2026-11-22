@@ -32,7 +32,7 @@
 #error "Falta include/config.h: copia include/config.example.h como include/config.h y escribe tu WiFi."
 #endif
 
-#define FW_VERSION "1.4.1"
+#define FW_VERSION "1.4.2"
 
 #ifndef LOCAL_SERVER_URL /* por si tu config.h es de la versión 1.0.0 */
 #define LOCAL_SERVER_URL ""
@@ -921,7 +921,8 @@ void setup()
     k.cfg.waitMs = prefs.getUInt(prefKey("wait", c).c_str(), DEFAULT_WAIT_MS);
     analogSetPinAttenuation(k.soilPin, ADC_11db); /* rango completo 0-3.3 V */
     if (k.relayPin >= 0)
-      Serial.printf(" Planta %d → ID: %s   (sensor GPIO%d · bomba GPIO%d)\n", c + 1, k.id, k.soilPin, k.relayPin);
+      Serial.printf(" Planta %d → ID: %s   (sensor GPIO%d · bomba GPIO%d, se enciende con %s)\n",
+                    c + 1, k.id, k.soilPin, k.relayPin, k.activeLow ? "LOW" : "HIGH");
     else
       Serial.printf(" Planta %d → ID: %s   (sensor GPIO%d · sin bomba)\n", c + 1, k.id, k.soilPin);
   }
