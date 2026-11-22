@@ -27,7 +27,7 @@ El umbral, el tiempo máximo y la pausa se cambian en la app (**Umbrales → Gua
 
 - **La decisión de regar la toma el ESP32**, no la página. Si se cae el WiFi o se cierra la app, la planta se sigue regando con el último umbral, que queda guardado en la memoria del ESP32.
 - La app solo muestra los datos, manda los umbrales y las órdenes de la bomba.
-- Cada ESP32 controla **una maceta**: un sensor de suelo, un DHT y una bomba.
+- Cada ESP32 controla **una o dos macetas** (`NUM_CANALES` en `config.h`). Cada una tiene su sensor de suelo, su bomba y sus propios umbrales; el DHT es compartido.
 
 ## Material
 
@@ -70,6 +70,36 @@ Usa **NO** (normalmente abierto) para que la bomba quede apagada si el ESP32 se 
 - El sensor de suelo debe ir a un pin **ADC1 (GPIO32-39)**. Los pines ADC2 dejan de leer cuando el WiFi está encendido.
 - Evita usar los pines 0, 2, 12 y 15 para el relé: el ESP32 los usa al arrancar.
 - Si tu sensor de suelo no cambia de valor con 3.3 V, probablemente trae el chip NE555 (necesita 5 V). Aliméntalo desde VIN y revisa con multímetro que AOUT nunca pase de 3.3 V.
+
+## Dos plantas con un solo ESP32
+
+Con `NUM_CANALES 2`, el ESP32 maneja dos plantas **independientes**: cada una con su sensor, su bomba, su umbral, su tiempo máximo y su pausa de seguridad. Si una planta está en pausa, la otra puede regar.
+
+| | Planta 1 | Planta 2 |
+|---|---|---|
+| Sensor de suelo (AO) | **D34** | **D35** |
+| Relevador (IN) | **D18** | **D19** (o `CH2_RELAY_PIN -1` si no hay segunda bomba) |
+| ID en la app | el del Monitor Serie, ej. `pg-205cdc` | el mismo con `-2`, ej. `pg-205cdc-2` |
+| Calibración en `config.h` | `CH1_RAW_DRY` / `CH1_RAW_WET` | `CH2_RAW_DRY` / `CH2_RAW_WET` |
+
+- Los dos sensores van con VCC a **3V3** y GND a GND; se pueden compartir esos dos cables.
+- Funcionan sensores resistivos (FC-28, MH-sensor-series, HW-080) y capacitivos. Usa siempre la salida **AO**.
+- Cada sensor lee distinto aunque sean del mismo tipo: calibra cada uno por separado. En el Monitor Serie cada línea dice `[P1 …]` o `[P2 …]`.
+- En la app, crea otra planta en **Mi planta** y escribe el ID con `-2` en **ID del ESP32**. Sus umbrales se ajustan con esa planta seleccionada.
+- Si las dos bombas comparten la misma fuente de 5 V, revisa que aguante las dos a la vez (unos 0.5 A cada una).
+- Sin segunda bomba (`CH2_RELAY_PIN -1`), la planta 2 queda en solo monitoreo y la app oculta su interruptor.
+
+### Una sola bomba para las dos plantas (`BOMBA_COMPARTIDA 1`)
+
+Si solo tienen **una bomba y un relevador** (en D18) y la manguera llega a las dos macetas:
+
+- Cada planta **pide agua** cuando baja de su umbral y **deja de pedir** al llegar a umbral + 20 %.
+- La bomba se **enciende si alguna planta pide** agua y se **apaga cuando ninguna pide**.
+- El tiempo máximo y la pausa de seguridad son los de la **planta 1** (en la app, Umbrales de la planta principal).
+- El interruptor de la bomba funciona desde cualquiera de las dos plantas en la app.
+- Si apagan la bomba desde la app mientras regaba sola, el riego automático espera la pausa antes de volver a encender.
+
+En el Monitor Serie cada segundo se ve `PIDE AGUA` u `OK` por planta y una línea `BOMBA 1 (GPIO18 = LOW): ENCENDIDA`, con el nivel real del pin para revisar el relevador.
 
 ## Estructura (proyecto PlatformIO)
 
@@ -183,16 +213,16 @@ Manda un POST con este JSON:
 - Cualquier sesión de la app que conozca el ID del dispositivo puede leerlo y mandarle órdenes. Por eso el ID por defecto incluye parte de la MAC.
 - Para un producto real habría que ligar cada ESP32 a la cuenta de su dueño y validar certificados.
 
-## Consumo de la cuota gratuita de Firestore (por ESP32, por día)
+## Consumo de la cuota gratuita de Firestore (por planta, por día)
 
 | Qué | Cantidad aprox. | Límite gratis |
 |---|---|---|
-| Estado cada 10 s (más uno extra, como máximo cada 2 s, cuando la humedad cambia 2 % o más) | 8,640 + los cambios | 20,000 escrituras |
+| Estado cada 20 s (más uno extra, como máximo cada 5 s, cuando la humedad cambia 3 % o más) | 4,320 + los cambios | 20,000 escrituras (total) |
 | Lecturas al historial cada 1 min | 1,440 escrituras | |
-| Revisar órdenes cada 5 s | 17,280 lecturas | 50,000 lecturas |
-| App abierta viendo el estado en vivo | ~8,640 lecturas | |
+| Revisar órdenes cada 10 s | 8,640 lecturas | 50,000 lecturas (total) |
+| App abierta viendo el estado en vivo | ~4,320 lecturas + los cambios | |
 
-Para varios ESP32, o para dejar la app abierta todo el día, sube `STATE_EVERY_MS` y `POLL_EVERY_MS` en `config.h` (por ejemplo, 30 s y 15 s). Si la humedad "brinca" sola y se acaba la cuota, sube `SOIL_SEND_DELTA` (por ejemplo, a 4).
+Con dos plantas todo se duplica y aun así queda margen. Para más ESP32, o para dejar la app abierta todo el día, sube `STATE_EVERY_MS` y `POLL_EVERY_MS` en `config.h` (por ejemplo, 30 s y 15 s). Si la humedad "brinca" sola y se acaba la cuota, sube `SOIL_SEND_DELTA` (por ejemplo, a 4).
 
 ## Problemas comunes
 
