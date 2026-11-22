@@ -1,8 +1,7 @@
 /* ============================================================
    PlantGuard · configuración del ESP32
-   1) Copia este archivo en esta misma carpeta (firmware/include) con el nombre  config.h
-   2) Llena tu red WiFi y, si hace falta, ajusta pines y calibración.
-   config.h está en .gitignore para que tu contraseña no se suba a GitHub.
+   Archivo PERSONAL con tu WiFi. Va en firmware/include/config.h
+   Está en .gitignore: NO lo subas a GitHub ni lo compartas.
    ============================================================ */
 #pragma once
 
@@ -32,22 +31,22 @@
      RAW_DRY = sensor al aire · RAW_WET = sensor en un vaso de agua.
    Resistivos (FC-28, MH-sensor-series, HW-080): usa la salida AO (no DO) y aliméntalos con 3V3.   */
 #define NUM_CANALES 2      /* 1 = una planta, 2 = dos plantas */
-#define BOMBA_COMPARTIDA 0 /* 1 = UNA sola bomba (la del relevador de la planta 1) riega las dos plantas: \
+#define BOMBA_COMPARTIDA 1 /* 1 = UNA sola bomba (la del relevador de la planta 1) riega las dos plantas: \
                               se enciende si alguna pide agua y se apaga cuando ninguna pide.             \
                               0 = cada planta con su propia bomba (CH2_RELAY_PIN).          */
 
-/* Planta 1 · sensor capacitivo v1.2 (para un resistivo FC-28/MH/HW-080 usa 4095 / ~1500 / 4096) */
+/* Planta 1 · MH-sensor-series (resistivo, módulo LM393) */
 #define CH1_SOIL_PIN 34           /* D34 */
-#define CH1_RELAY_PIN 18          /* D18: IN del relevador 1 */
-#define CH1_RELAY_ACTIVE_LOW true /* la mayoría de los módulos relé se activan con LOW; si tu bomba funciona al revés, pon false */
-#define CH1_RAW_DRY 2900
-#define CH1_RAW_WET 1250
+#define CH1_RELAY_PIN 18          /* D18: IN del relevador (la única bomba) */
+#define CH1_RELAY_ACTIVE_LOW true /* LOW = bomba encendida, igual que tu código de 2 sensores (RELE_ACTIVO_EN_LOW = true) */
+#define CH1_RAW_DRY 4095
+#define CH1_RAW_WET 1500
 #define CH1_RAW_MIN_VALID 150 /* menos que esto = sensor desconectado */
-#define CH1_RAW_MAX_VALID 3950
+#define CH1_RAW_MAX_VALID 4096
 
 /* Planta 2 · HW-080 (resistivo, módulo LM393) */
 #define CH2_SOIL_PIN 35                           /* D35, junto a D34 */
-#define CH2_RELAY_PIN 19                          /* D19: IN del relevador 2. Pon -1 si no tienes segunda bomba (solo monitoreo) */
+#define CH2_RELAY_PIN -1                          /* no se usa: con BOMBA_COMPARTIDA 1 la planta 2 usa la bomba de D18 */
 #define CH2_RELAY_ACTIVE_LOW CH1_RELAY_ACTIVE_LOW /* igual que el 1; cámbialo si el relevador 2 funciona al revés */
 #define CH2_RAW_DRY 4095
 #define CH2_RAW_WET 1500 /* cámbialo por lo que marque el HW-080 en un vaso de agua */
@@ -81,7 +80,7 @@
    Formato: {"humedad":2500,"humedadPct":38.5,"soilOk":true,"temp":23.1,"hum":55,"bomba":false,"id":"pg-a1b2c3"}
    "humedad" es el valor CRUDO del sensor, igual que en el código anterior.
    Vacío "" = desactivado.                                                                          */
-#define LOCAL_SERVER_URL "" /* ej.: "http://192.168.3.80:3000/datos-sensor" */
+#define LOCAL_SERVER_URL "" /* apagado. Para usar tu servidor local: "http://192.168.3.80:3000/datos-sensor" */
 #define LOCAL_EVERY_MS 3000UL
 
 /* ---------- Envío a la nube (cuida la cuota gratuita de Firestore) ----------
