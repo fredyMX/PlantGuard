@@ -2,9 +2,13 @@
    PlantGuard · firmware ESP32 (Nivel 2: hardware real)
    Equipo Bytec
 
-   - Lee el sensor capacitivo de humedad del suelo y el DHT11/DHT22.
-   - Decide el riego AQUÍ, en el ESP32: si se cae el WiFi la planta se sigue regando
-     con el último umbral guardado.
+   - Lee el sensor de humedad del suelo (FC-28 o capacitivo) y el DHT11/DHT22.
+   - Decide el riego AQUÍ, en el ESP32 (si se cae el WiFi la planta se sigue regando):
+       · humedad < umbral mínimo              → se ENCIENDE la bomba
+       · humedad ≥ umbral + HUMEDAD_RANGO     → se APAGA (entre ambos conserva su estado)
+       · encendida más del tiempo máximo      → se APAGA y entra en PAUSA DE SEGURIDAD;
+                                                 al terminar la pausa vuelve a intentar
+     Umbral, tiempo máximo y pausa se cambian desde la app (pantalla Umbrales).
    - Publica su estado en Firestore (dispositivos/{ID}) y recibe de la app
      los umbrales (cfg) y las órdenes de la bomba (cmd).
 
@@ -27,13 +31,16 @@
 #error "Falta include/config.h: copia include/config.example.h como include/config.h y escribe tu WiFi."
 #endif
 
-#define FW_VERSION "1.2.0"
+#define FW_VERSION "1.3.0"
 
 #ifndef LOCAL_SERVER_URL /* por si tu config.h es de la versión 1.0.0 */
 #define LOCAL_SERVER_URL ""
 #endif
 #ifndef LOCAL_EVERY_MS
 #define LOCAL_EVERY_MS 3000UL
+#endif
+#ifndef HUMEDAD_RANGO
+#define HUMEDAD_RANGO 20 /* la bomba se apaga al llegar a umbral + 20 % (40 → 60 %) */
 #endif
 /* Actualización rápida (valores por defecto si tu config.h no los trae) */
 #ifndef SOIL_EVERY_MS
@@ -76,8 +83,8 @@ static bool soilOk = false, dhtOk = false, haveSoil = false, haveDht = false;
 static bool pumpOn = false;
 static char pumpMode[8] = ""; /* "auto" | "manual" | "" */
 static uint32_t pumpStartMs = 0, pumpForMs = 0;
-static uint32_t lastEndMs = 0; /* fin del último riego AUTOMÁTICO (millis) */
-static bool hasLastEnd = false;
+static uint32_t lastEndMs = 0;  /* inicio de la última PAUSA DE SEGURIDAD (millis) */
+static bool hasLastEnd = false; /* hubo un corte por tiempo máximo */
 static bool critFlag = false;
 
 static int pendingCmd = 0; /* 0 nada · 1 encender · 2 apagar (lo pone la nube, lo aplica el loop) */
@@ -132,6 +139,20 @@ static void pushEvent(const char *type, const char *msg)
 /* ---------------- Bomba ---------------- */
 static void relay(bool on) { digitalWrite(PIN_RELAY, (on != RELAY_ACTIVE_LOW) ? HIGH : LOW); }
 
+static int humedadMax()
+{
+  int m = cfg.thr + HUMEDAD_RANGO;
+  return m > 100 ? 100 : m;
+}
+static bool enPausa() { return hasLastEnd && (uint32_t)(millis() - lastEndMs) < cfg.waitMs; }
+static void fmtSeg(char *b, size_t n, uint32_t ms)
+{
+  if (ms < 120000)
+    snprintf(b, n, "%lu s", (unsigned long)(ms / 1000));
+  else
+    snprintf(b, n, "%lu min", (unsigned long)(ms / 60000));
+}
+
 static void startPump(const char *mode, int seconds)
 { /* con LOCK */
   if (pumpOn)
@@ -146,26 +167,49 @@ static void startPump(const char *mode, int seconds)
   pumpStartMs = millis();
   pumpForMs = (uint32_t)seconds * 1000;
   char m[96];
-  snprintf(m, sizeof m, "%s · humedad al %d%%",
-           strcmp(mode, "auto") == 0 ? "Riego automático activado" : "Riego manual iniciado", (int)roundf(soilPct));
+  if (strcmp(mode, "auto") == 0)
+    snprintf(m, sizeof m, "Humedad baja (%d%%): bomba encendida · se apaga al llegar a %d%%", (int)roundf(soilPct), humedadMax());
+  else
+    snprintf(m, sizeof m, "Riego manual iniciado · humedad al %d%%", (int)roundf(soilPct));
   pushEvent(mode, m);
   stateDirty = true;
 }
 
-static void stopPump()
+enum
+{
+  STOP_META,
+  STOP_TIEMPO,
+  STOP_APP,
+  STOP_SENSOR
+};
+
+static void stopPump(int why)
 { /* con LOCK */
   if (!pumpOn)
     return;
   relay(false);
   pumpOn = false;
-  int sec = (int)roundf((millis() - pumpStartMs) / 1000.0f);
-  if (strcmp(pumpMode, "auto") == 0)
-  {
+  bool autom = strcmp(pumpMode, "auto") == 0;
+  int sec = (int)roundf((millis() - pumpStartMs) / 1000.0f), h = (int)roundf(soilPct);
+  char m[96], w[16];
+  if (why == STOP_META)
+    snprintf(m, sizeof m, "Humedad alcanzada (%d%%): bomba apagada tras %d s", h, sec);
+  else if (why == STOP_TIEMPO && autom)
+  { /* igual que tu código: corte por tiempo → pausa */
     lastEndMs = millis();
     hasLastEnd = true;
-  } /* el manual no frena al automático */
-  char m[96];
-  snprintf(m, sizeof m, "Riego terminado · duró %d s (humedad al %d%%)", sec, (int)roundf(soilPct));
+    fmtSeg(w, sizeof w, cfg.waitMs);
+    snprintf(m, sizeof m, "Tiempo máximo (%d s) sin llegar al %d%%: pausa de %s (revisa sensor o agua)", sec, humedadMax(), w);
+    pushEvent("pausa", m);
+    stateDirty = true;
+    return;
+  }
+  else if (why == STOP_TIEMPO)
+    snprintf(m, sizeof m, "Riego manual terminado · duró %d s (humedad al %d%%)", sec, h);
+  else if (why == STOP_APP)
+    snprintf(m, sizeof m, "Bomba apagada desde la app · duró %d s (humedad al %d%%)", sec, h);
+  else
+    snprintf(m, sizeof m, "Riego detenido: sin lectura del sensor de suelo (duró %d s)", sec);
   pushEvent("stop", m);
   stateDirty = true;
 }
@@ -232,7 +276,7 @@ static void soilStep()
       stateDirty = true;
       pushEvent("off", "Sensor de suelo desconectado");
       if (pumpOn && strcmp(pumpMode, "auto") == 0)
-        stopPump(); /* sin lectura no se riega a ciegas */
+        stopPump(STOP_SENSOR); /* sin lectura no se riega a ciegas */
     }
   }
 
@@ -246,15 +290,28 @@ static void soilStep()
       pushEvent("crit", m);
     }
     critFlag = crit;
-    bool esperaOk = !hasLastEnd || (uint32_t)(millis() - lastEndMs) >= cfg.waitMs;
-    if (!pumpOn && soilPct < cfg.thr && esperaOk)
+    static bool pausaAntes = false;
+    bool pausa = enPausa();
+    if (pausaAntes && !pausa)
+    {
+      Serial.println("[riego] fin de la pausa de seguridad");
+      stateDirty = true;
+    }
+    pausaAntes = pausa;
+    if (pumpOn && strcmp(pumpMode, "auto") == 0 && soilPct >= humedadMax())
+      stopPump(STOP_META);
+    else if (!pumpOn && soilPct < cfg.thr && !pausa)
       startPump("auto", cfg.dur);
   }
+  bool pausaNow = enPausa();
+  int hMin = cfg.thr, hMax = humedadMax();
   UNLOCK();
 
-  Serial.printf("suelo raw=%4d -> %5.1f%% %s | %.1f°C %.0f%% %s | bomba %s\n",
-                raw, pct, valid ? "" : "(FUERA DE RANGO)", tempC, humPct, dhtOk ? "" : "(DHT sin lectura)",
-                pumpOn ? pumpMode : "apagada");
+  Serial.printf("Lectura: %4d | Humedad: %3d %% %s| Bomba: %s | rango %d-%d %% | %.1f°C %.0f%%%s\n",
+                raw, (int)roundf(pct), valid ? "" : "(FUERA DE RANGO) ",
+                pumpOn ? (strcmp(pumpMode, "auto") == 0 ? "ENCENDIDA (auto)" : "ENCENDIDA (manual)") : pausaNow ? "PAUSA DE SEGURIDAD"
+                                                                                                                : "APAGADA",
+                hMin, hMax, tempC, humPct, dhtOk ? "" : " (DHT sin lectura)");
 }
 
 static void dhtStep()
@@ -468,7 +525,9 @@ static bool sendState()
   putS(e, "pumpMode", pumpOn ? pumpMode : "");
   int32_t remMs = pumpOn ? (int32_t)pumpForMs - (int32_t)(millis() - pumpStartMs) : 0;
   putI(e, "pumpLeft", remMs > 0 ? (remMs + 999) / 1000 : 0);
-  putI(e, "lastEnd", hasLastEnd ? msToEpoch(lastEndMs) : 0);
+  putI(e, "lastEnd", hasLastEnd ? msToEpoch(lastEndMs) : 0); /* inicio de la pausa de seguridad */
+  putI(e, "max", humedadMax());                              /* la bomba se apaga al llegar aquí */
+  putB(e, "pausa", enPausa());
   putI(e, "cmdAck", cmdAck);
   putI(e, "thr", cfg.thr);
   putI(e, "dur", cfg.dur);
@@ -714,13 +773,13 @@ void loop()
     if (pendingCmd == 1)
       startPump("manual", MANUAL_S);
     else
-      stopPump();
+      stopPump(STOP_APP);
     cmdAck = pendingCmdId;
     pendingCmd = 0;
     stateDirty = true;
   }
   if (pumpOn && (uint32_t)(millis() - pumpStartMs) >= pumpForMs)
-    stopPump(); /* fin del riego por tiempo */
+    stopPump(STOP_TIEMPO); /* tiempo máximo */
   UNLOCK();
 
   digitalWrite(PIN_LED, cloudOk ? HIGH : ((millis() / 400) % 2 ? HIGH : LOW));
