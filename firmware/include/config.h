@@ -36,9 +36,9 @@
                               0 = cada planta con su propia bomba (CH2_RELAY_PIN).          */
 
 /* Planta 1 · MH-sensor-series (resistivo, módulo LM393) */
-#define CH1_SOIL_PIN 34           /* D34 */
-#define CH1_RELAY_PIN 18          /* D18: IN del relevador (la única bomba) */
-#define CH1_RELAY_ACTIVE_LOW true /* LOW = bomba encendida, igual que tu código de 2 sensores (RELE_ACTIVO_EN_LOW = true) */
+#define CH1_SOIL_PIN 34            /* D34 */
+#define CH1_RELAY_PIN 18           /* D18: IN del relevador (la única bomba) */
+#define CH1_RELAY_ACTIVE_LOW false /* HIGH = bomba encendida: comprobado con el Monitor Serie (con true, pin en HIGH la bomba seguía prendida) */
 #define CH1_RAW_DRY 4095
 #define CH1_RAW_WET 1500
 #define CH1_RAW_MIN_VALID 150 /* menos que esto = sensor desconectado */
