@@ -6,8 +6,8 @@
     '<div class="alert" id="alerta">⚠ <span></span></div>',
     '<div class="hero"><small>Humedad del suelo<span id="hname"></span></small><div class="big"><span id="hv" style="font-size:56px;opacity:1"></span><span>%</span></div><p id="hmsg"></p><small class="src" id="hsrc"></small></div>',
     '<div class="grid">',
-    '<div class="tile" id="t-temp"><small>🌡</small><b></b><small class="lbl">Temperatura</small></div>',
-    '<div class="tile" id="t-hum"><small>💧</small><b></b><small class="lbl">Humedad amb.</small></div>',
+    '<div class="tile" id="t-temp"><small>🌡</small><b></b><small>Temperatura</small></div>',
+    '<div class="tile" id="t-hum"><small>💧</small><b></b><small>Humedad amb.</small></div>',
     '<div class="tile fake"><small>〰</small><b>1013</b><small>Presión (hPa)</small></div>',
     '<div class="tile fake"><small>☀</small><b>540 lx</b><small>Luz ambiental</small></div>',
     '</div>',
@@ -57,9 +57,7 @@
       : l === 'warn' ? 'Por debajo del umbral (' + s.thr + '%)' : 'Dentro del rango (' + s.thr + '% mínimo)';
     m.className = 'lv-' + l;
     var t = sec.querySelector('#t-temp'), h = sec.querySelector('#t-hum');
-    var dht = !wait && !(dev && dev.dhtOk === false), simAmb = dev && dev.dhtSim;
-    t.querySelector('.lbl').textContent = simAmb ? 'Temperatura (simulada)' : 'Temperatura';
-    h.querySelector('.lbl').textContent = simAmb ? 'Humedad amb. (simulada)' : 'Humedad amb.';
+    var dht = !wait && !(dev && dev.dhtOk === false);
     t.querySelector('b').textContent = dht ? s.temp.toFixed(1) + '°C' : '--'; lv(t, dht ? L('temp', s.temp) : 'warn');
     h.querySelector('b').textContent = dht ? Math.round(s.hum) + '%' : '--'; lv(h, dht ? L('hum', s.hum) : 'warn');
 
@@ -80,8 +78,8 @@
       ? (dev && dev.compartida && s.pumpMode === 'auto'
         ? 'Automático (bomba compartida) · máx. ' + s.pumpLeft + ' s más'
         : dev && dev.max && s.pumpMode === 'auto'
-          ? 'Automático · hasta ' + dev.max + '% · máx. ' + s.pumpLeft + ' s más'
-          : (s.pumpMode === 'auto' ? 'Automático' : 'Manual') + ' · riega ' + s.pumpLeft + ' s más')
+        ? 'Automático · hasta ' + dev.max + '% · máx. ' + s.pumpLeft + ' s más'
+        : (s.pumpMode === 'auto' ? 'Automático' : 'Manual') + ' · riega ' + s.pumpLeft + ' s más')
       : dev && dev.pausa ? (w ? 'Pausa de seguridad · reintenta en ' + wt : 'Pausa de seguridad')
         : (w && !dev ? 'Apagada · espera ' + wt + ' para volver a regar' : 'Apagada');
   }
