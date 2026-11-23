@@ -6,8 +6,8 @@
 #pragma once
 
 /* ---------- Red WiFi (solo 2.4 GHz: el ESP32 no ve redes de 5 GHz) ---------- */
-#define WIFI_SSID "INFINITUM8CBD"
-#define WIFI_PASS "MjyGnsZ3gn"
+#define WIFI_SSID "realme 14 Pro 5G C954"
+#define WIFI_PASS "pokefredy"
 
 /* ---------- Firebase (los mismos datos que js/firebase-config.js) ---------- */
 #define FIREBASE_API_KEY "AIzaSyDr8YW4EE654dXkHLdpDWI3wsHBT3E80BA"
