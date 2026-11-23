@@ -78,8 +78,8 @@
       ? (dev && dev.compartida && s.pumpMode === 'auto'
         ? 'Automático (bomba compartida) · máx. ' + s.pumpLeft + ' s más'
         : dev && dev.max && s.pumpMode === 'auto'
-        ? 'Automático · hasta ' + dev.max + '% · máx. ' + s.pumpLeft + ' s más'
-        : (s.pumpMode === 'auto' ? 'Automático' : 'Manual') + ' · riega ' + s.pumpLeft + ' s más')
+          ? 'Automático · hasta ' + dev.max + '% · máx. ' + s.pumpLeft + ' s más'
+          : (s.pumpMode === 'auto' ? 'Automático' : 'Manual') + ' · riega ' + s.pumpLeft + ' s más')
       : dev && dev.pausa ? (w ? 'Pausa de seguridad · reintenta en ' + wt : 'Pausa de seguridad')
         : (w && !dev ? 'Apagada · espera ' + wt + ' para volver a regar' : 'Apagada');
   }
