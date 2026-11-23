@@ -44,13 +44,13 @@
         sec.querySelector('#h2').textContent = comp
           ? 'Bomba compartida: el tiempo máximo y la pausa se toman de la planta principal' + (dev.canal > 1 ? ' (cámbialos ahí).' : ' y valen para las dos plantas.')
           : dev
-            ? 'Si la bomba lleva este tiempo encendida sin llegar al ' + max + '%, se apaga por seguridad (revisa sensor o agua).'
-            : 'Tiempo que la bomba permanece encendida en cada riego.';
+          ? 'Si la bomba lleva este tiempo encendida sin llegar al ' + max + '%, se apaga por seguridad (revisa sensor o agua).'
+          : 'Tiempo que la bomba permanece encendida en cada riego.';
         sec.querySelector('#h3').textContent = comp && dev.canal > 1
           ? 'Con bomba compartida, la pausa de seguridad es la de la planta principal.'
           : dev
-            ? 'Pausa de seguridad después de un corte por tiempo: ' + wtxt + '. Al terminar, el ESP32 vuelve a intentar.'
-            : 'Evita ciclos de riego demasiado frecuentes tras una activación.';
+          ? 'Pausa de seguridad después de un corte por tiempo: ' + wtxt + '. Al terminar, el ESP32 vuelve a intentar.'
+          : 'Evita ciclos de riego demasiado frecuentes tras una activación.';
       }
       d.checked = PG.state.demo;
       d.onchange = function () { PG.set('demo', d.checked); paint(); };
