@@ -203,6 +203,7 @@
     return {
       apagadoAutomaticoAl: devInfo() && devInfo().max ? devInfo().max + '% de humedad (ESP32)' : undefined,
       pausaDeSeguridad: devInfo() ? !!devInfo().pausa : undefined,
+      ambienteSimulado: devInfo() ? !!devInfo().dhtSim : undefined, /* temperatura/humedad ambiente simuladas por el ESP32 */
       fuenteDatos: devInfo() ? 'ESP32 real «' + devInfo().id + '»' + (devInfo().online ? '' : ' (sin conexión)') : 'Simulación en el navegador',
       nombrePlanta: (PG.plant ? PG.plant.nombre + (PG.plant.especie ? ' (' + PG.plant.especie + ')' : '') : 'La Dormilona (Mimosa pudica)'),
       ubicacion: PG.plant ? PG.plant.tipo + (PG.plant.ubicacion ? ', ' + PG.plant.ubicacion : '') : 'Interior, Sala junto a la ventana',
@@ -278,7 +279,7 @@
       var x = ensure(p), d = devOf(p, x), o = id === cur ? S : x, t = typeof e.t === 'number' ? e.t : 0;
       if (!t || t <= d.t) return; /* nada nuevo */
       d.t = t; d.wait = false; d.online = now() - t < ONLINE_MS;
-      d.rssi = e.rssi; d.fw = e.fw; d.ip = e.ip; d.cmdAck = e.cmdAck; d.dhtOk = e.dhtOk !== false; d.raw = e.soilRaw;
+      d.rssi = e.rssi; d.fw = e.fw; d.ip = e.ip; d.cmdAck = e.cmdAck; d.dhtOk = e.dhtOk !== false; d.dhtSim = !!e.dhtSim; d.raw = e.soilRaw;
       d.cfg = { thr: e.thr, dur: e.dur, waitMs: e.waitMs };
       d.compartida = !!e.bombaCompartida; d.canal = e.canal || 1; d.pide = !!e.pideAgua; /* firmware 1.5: una bomba para varias plantas */
       d.hasPump = e.hasPump !== false; /* firmware 1.4: una planta puede ser solo monitoreo (sin bomba) */
