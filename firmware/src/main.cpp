@@ -34,7 +34,7 @@
 #error "Falta include/config.h: copia include/config.example.h como include/config.h y escribe tu WiFi."
 #endif
 
-#define FW_VERSION "1.5.0"
+#define FW_VERSION "1.6.0"
 
 #ifndef LOCAL_SERVER_URL /* por si tu config.h es de la versión 1.0.0 */
 #define LOCAL_SERVER_URL ""
@@ -107,6 +107,13 @@ static const char *const LOCAL_URL = "" LOCAL_SERVER_URL;
 #endif
 #ifndef CH2_RAW_MAX_VALID
 #define CH2_RAW_MAX_VALID CH1_RAW_MAX_VALID
+#endif
+
+#ifndef DHT_SIMULADO
+#define DHT_SIMULADO 0 /* 1 = sin DHT: el ESP32 simula temperatura y humedad ambiente */
+#endif
+#ifndef ZONA_HORARIA_H
+#define ZONA_HORARIA_H -6 /* Ciudad de México (UTC-6), para el ciclo de día de la simulación */
 #endif
 
 #ifndef BOMBA_COMPARTIDA
@@ -457,10 +464,41 @@ static void soilStep(int c)
                 c + 1, k.id, raw, (int)roundf(pct), valid ? "" : "(FUERA DE RANGO) ", pide ? "PIDE AGUA" : "OK", hMin, hMax);
 }
 
+/* Ambiente SIMULADO (sin DHT): ciclo de un día típico + variación lenta al azar.
+   Más fresco y húmedo de madrugada (~15 °C, ~69 %), más caliente y seco a media tarde (~26 °C, ~35 %). */
+static void simAmbiente(float &t, float &h)
+{
+  float horas;
+  time_t now = time(nullptr);
+  if (now > 1700000000)
+  { /* hora local real (NTP) */
+    long s = (long)(now % 86400L) + ZONA_HORARIA_H * 3600L;
+    s = ((s % 86400L) + 86400L) % 86400L;
+    horas = s / 3600.0f;
+  }
+  else
+    horas = fmodf(12.0f + millis() / 3600000.0f, 24.0f);      /* sin hora de internet: empieza a mediodía */
+  float c = cosf((horas - 15.0f) * 2.0f * (float)PI / 24.0f); /* +1 a las 15 h, -1 a las 3 h */
+  static float nt = 0, nh = 0;                                /* variación lenta para que no sea una curva perfecta */
+  nt += random(-10, 11) / 100.0f;
+  nt = constrain(nt, -0.8f, 0.8f);
+  nh += random(-10, 11) / 50.0f;
+  nh = constrain(nh, -3.0f, 3.0f);
+  t = 20.5f + 5.5f * c + nt;
+  h = 52.0f - 17.0f * c + nh;
+}
+
 static void dhtStep()
 {
   static int bad = 0;
-  float t = dht.readTemperature(), h = dht.readHumidity();
+  float t, h;
+  if (DHT_SIMULADO)
+    simAmbiente(t, h);
+  else
+  {
+    t = dht.readTemperature();
+    h = dht.readHumidity();
+  }
   LOCK();
   if (!isnan(t) && !isnan(h))
   {
@@ -705,6 +743,7 @@ static bool sendState(int c)
     putNull(e, "hum");
   }
   putB(e, "dhtOk", dhtOk);
+  putB(e, "dhtSim", DHT_SIMULADO); /* temperatura y humedad ambiente simuladas */
   bool hp = k.bomba >= 0;
   Bomba *p = hp ? &bombas[k.bomba] : nullptr;
   putB(e, "hasPump", hp);
@@ -803,6 +842,7 @@ static void sendLocal()
   {
     d["temp"] = r1(tempC);
     d["hum"] = (int)roundf(humPct);
+    d["ambienteSimulado"] = (bool)DHT_SIMULADO;
   }
   d["bomba"] = ch[0].bomba >= 0 && bombas[ch[0].bomba].on;
   d["id"] = String(ch[0].id);
@@ -997,6 +1037,8 @@ void setup()
                   b + 1, bombas[b].pin, bombas[b].activeLow ? "LOW" : "HIGH", nivel(bombas[b]));
   if (!numBombas)
     Serial.println(" Sin bomba: solo monitoreo");
+  if (DHT_SIMULADO)
+    Serial.println(" Temperatura y humedad ambiente: SIMULADAS (DHT_SIMULADO 1)");
   Serial.println(" (escribe cada ID en su planta: Mi planta → Editar → ID del ESP32)");
   Serial.printf(" Memoria libre: %u bytes\n", (unsigned)ESP.getFreeHeap());
   Serial.println("========================================");
@@ -1039,7 +1081,9 @@ void loop()
     tDht = now;
     dhtStep();
     if (firstDht || haveDht)
-      Serial.printf("[ambiente] %.1f°C %.0f%%%s\n", tempC, humPct, dhtOk ? "" : " (DHT sin lectura)");
+      Serial.printf("[ambiente] %.1f°C %.0f%%%s\n", tempC, humPct,
+                    DHT_SIMULADO ? " (SIMULADO)" : dhtOk ? ""
+                                                         : " (DHT sin lectura)");
     firstDht = false;
   }
 
